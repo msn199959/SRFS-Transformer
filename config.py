@@ -107,6 +107,9 @@ parser.add_argument('--pre_norm', action='store_true')
 parser.add_argument('--masks', action='store_true',
                     help="Train segmentation head if the flag is provided")
 
+parser.add_argument('--encoder_supervise', action='store_true',
+                    help="Train segmentation head if the flag is provided")
+
 # Loss
 parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
                     help="Disables auxiliary decoding losses (loss at each layer)")
@@ -125,6 +128,7 @@ parser.add_argument('--dice_loss_coef', default=1, type=float)
 parser.add_argument('--cls_loss_coef', default=2, type=float)
 parser.add_argument('--count_loss_coef', default=2, type=float)
 parser.add_argument('--point_loss_coef', default=5, type=float)
+parser.add_argument('--encoder_loss_coef', default=0.5, type=float)
 parser.add_argument('--giou_loss_coef', default=2, type=float)
 parser.add_argument('--focal_alpha', default=0.25, type=float)
 

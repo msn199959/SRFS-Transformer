@@ -20,6 +20,7 @@ from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
 import torch
 import numpy as np
+import pdb
 from torch.utils.tensorboard import SummaryWriter  # add tensoorboard
 
 if args.backbone == 'resnet50' or args.backbone == 'resnet101':
@@ -113,6 +114,8 @@ def main(args):
 
         train(train_data, model, criterion, optimizer, epoch, scheduler, logger, writer, args)
 
+        torch.cuda.empty_cache() #显存清理
+
         '''inference '''
         if epoch % args['test_per_epoch'] == 0 and epoch >= 0:
 
@@ -205,18 +208,26 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
     model.train()
     loss_log = []
 
+    criterion.weight_dict['encoder_supervise'] = max(0.5*(100-epoch)/100, 0)
     for i, (fname, img, targets) in enumerate(train_loader):
         img = img.cuda()
         d6 = model(img)
-
         loss_dict = criterion(d6, targets)
         weight_dict = criterion.weight_dict
+        #pdb.set_trace()
         loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
         writer.add_scalar('loss/total', loss, len(train_loader) * epoch + i)
         writer.add_scalar('loss/loss_ce', loss_dict['loss_ce'], len(train_loader) * epoch + i)
         writer.add_scalar('loss/loss_point', loss_dict['loss_point'], len(train_loader) * epoch + i)
+        writer.add_scalar('loss/loss_encoder_supervise_lr', weight_dict['encoder_supervise'], len(train_loader) * epoch + i)
+        writer.add_scalar('loss/loss_encoder_supervise', loss_dict['encoder_supervise'], len(train_loader) * epoch + i)
         writer.add_scalar('lr/lr_backbone', optimizer.param_groups[0]['lr'], len(train_loader) * epoch + i)
+
+        if args['aux_loss']:
+            for i in range(5):
+                writer.add_scalar(f'loss/loss_point_{i}', loss_dict[f'loss_point_{i}'], len(train_loader) * epoch + i)
+                writer.add_scalar(f'loss/loss_ce_{i}', loss_dict[f'loss_ce_{i}'], len(train_loader) * epoch + i)
 
         loss_log.append(loss.item())
 
@@ -228,14 +239,7 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
     epoch_time = time.time() - start
     scheduler.step()
     if args['local_rank'] == 0:
-        logger.info('Training Epoch:[{}/{}]\t loss={:.5f}\t lr={:.6f}\t epoch_time={:.3f}'.format(epoch,
-                                                                                                                args[
-                                                                                                                    'epochs'],
-                                                                                                                np.mean(
-                                                                                                                    loss_log),
-                                                                                                                args[
-                                                                                                                    'lr'],
-                                                                                                                epoch_time))
+        logger.info('Training Epoch:[{}/{}]\t loss={:.5f}\t lr={:.6f}\t epoch_time={:.3f}'.format(epoch,args['epochs'],np.mean(loss_log),args['lr'], epoch_time))
 
 
 def validate(Pre_data, model, criterion, epoch, logger, args):

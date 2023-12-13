@@ -161,9 +161,6 @@ def validate(Pre_data, model, criterion, logger, args):
 
     for i, (fname, img, kpoint, targets, patch_info) in enumerate(test_loader):
 
-        if i < 10:
-            continue
-
         if len(img.shape) == 5:
             img = img.squeeze(0)
         if len(img.shape) == 3:
@@ -171,7 +168,7 @@ def validate(Pre_data, model, criterion, logger, args):
         if len(kpoint.shape) == 5:
             kpoint = kpoint.squeeze(0)
 
-        save_img_patch(fname, img)
+        #save_img_patch(fname, img)
 
         with torch.no_grad():
             img = img.cuda()

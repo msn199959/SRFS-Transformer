@@ -26,6 +26,9 @@ from .segmentation import (DETRsegm, PostProcessPanoptic, PostProcessSegm,
                            dice_loss, sigmoid_focal_loss)
 from .transformer import build_transformer
 import pdb
+import numpy as np
+import scipy.stats
+
 
 
 class ConditionalDETR(nn.Module):
@@ -61,6 +64,8 @@ class ConditionalDETR(nn.Module):
         nn.init.constant_(self.point_embed.layers[-1].weight.data, 0)
         nn.init.constant_(self.point_embed.layers[-1].bias.data, 0)
 
+        self.encoder_supervise = True
+
     def forward(self, samples: NestedTensor):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
@@ -84,13 +89,13 @@ class ConditionalDETR(nn.Module):
         src, mask = features[-1].decompose()
         assert mask is not None
 
-        hs, reference = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])
+        hs, reference, intermediate_memory = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])
 
         reference_before_sigmoid = inverse_sigmoid(reference) #[128, num_queries, 2]
         outputs_coords = []
         for lvl in range(hs.shape[0]):
             tmp = self.point_embed(hs[lvl]) #[batch_size, num_queries, 3]
-            tmp[..., :2] += reference_before_sigmoid 
+            tmp[..., :2] += reference_before_sigmoid
             #tmp[..., :2].shape = [batch_size, num_queries, 2] 
             #reference_before_sigmoid.shape = [batch_size, num_queries, 2] 
             outputs_coord = tmp.sigmoid()
@@ -101,6 +106,9 @@ class ConditionalDETR(nn.Module):
         out = {'pred_logits': outputs_class[-1], 'pred_points': outputs_coord[-1]}
         if self.aux_loss: #true
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
+
+        if self.encoder_supervise:
+            out['intermediate_memory'] = intermediate_memory
         return out
 
     @torch.jit.unused
@@ -199,6 +207,77 @@ class SetCriterion(nn.Module):
         # losses['loss_giou'] = 0.0
         return losses
 
+    def wasserstein_distance_1d(u_values, v_values):
+        """计算一维分布之间的Wasserstein距离"""
+        u_sorted, _ = torch.sort(u_values)
+        v_sorted, _ = torch.sort(v_values)
+        return torch.mean(torch.abs(u_sorted - v_sorted))
+    
+    def target_map_to_grid(self, targets, grid_size=8):
+        # 创建一个 3x3 的零矩阵
+        grid = torch.zeros((grid_size, grid_size), dtype=torch.int)
+
+        # 遍历每个点
+        for point in targets:
+            x, y, _ = point  # 忽略 distance，只考虑 x 和 y
+
+            # 确定点落在哪个网格单元
+            # 由于 x, y 在 0-1 之间，乘以 grid_size 并取整即可找到对应的索引
+            x_index = int(x * grid_size)
+            y_index = int(y * grid_size)
+
+            # 防止坐标正好在边界上（例如 1.0）导致的索引越界
+            x_index = min(x_index, grid_size - 1)
+            y_index = min(y_index, grid_size - 1)
+
+            # 增加对应网格单元的值
+            grid[y_index, x_index] += 1
+
+        return grid
+    
+    def loss_encoder_supervise(self, u_values, v_values):
+        # u_values = intermediate_memory
+        # v_values = target
+        u_values = torch.mean(u_values, dim=3, keepdim=True).squeeze() #[2,batch_size, 64] 
+        _, batch_size, _ = u_values.shape 
+        v_values = [self.target_map_to_grid(v_value['points']) for v_value in v_values]
+        v_values = torch.stack(v_values).transpose(1,2).cuda()
+        v_values = v_values.reshape(batch_size,-1) #[batch_size, 64]
+
+        v_values_normlized = 1 - self.min_max_norm(v_values) #[batch_size, 64]
+        u_values_normlized = self.min_max_norm(u_values) #[2,batch_size, 64]
+
+        v_values_normlized = v_values_normlized.unsqueeze(0).repeat(2,1,1) #[2, batch_size, 64]
+
+        losses = {'encoder_supervise': torch.mean(torch.abs(u_values_normlized - v_values_normlized))}
+        return losses
+    
+    def min_max_norm(self, input_tensor):
+        tensor_min = input_tensor.min(dim=-1, keepdim=True)[0]
+        tensor_max = input_tensor.max(dim=-1, keepdim=True)[0]
+
+        # 防止分母为零的情况
+        delta = tensor_max - tensor_min
+        delta[delta == 0] = 1
+
+        # 执行最小-最大缩放归一化
+        tensor_normalized = (input_tensor - tensor_min) / delta
+        return tensor_normalized
+
+
+    def wasserstein_distance_tensor_global(self, tensor1, tensor2):
+        if not tensor1.is_cuda or not tensor2.is_cuda:
+            raise ValueError("Tensors must be on GPU.")
+
+        # 将张量转换为一维
+        flat_tensor1 = tensor1.view(-1)
+        flat_tensor2 = tensor2.view(-1)
+
+        # 计算Wasserstein距离
+        wd = wasserstein_distance_1d(flat_tensor1, flat_tensor2)
+
+        return wd
+
     def loss_masks(self, outputs, targets, indices, num_points):
         """Compute the losses related to the masks: the focal loss and the dice loss.
            targets dicts must contain the key "masks" containing a tensor of dim [nb_target_points, h, w]
@@ -242,7 +321,7 @@ class SetCriterion(nn.Module):
 
     def get_loss(self, loss, outputs, targets, indices, num_points, **kwargs):
         loss_map = {
-            'lbaels': self.loss_labels,
+            'labels': self.loss_labels,
             'cardinality': self.loss_cardinality,
             'points': self.loss_points,
             'masks': self.loss_masks
@@ -271,9 +350,13 @@ class SetCriterion(nn.Module):
         num_points = torch.clamp(num_points / get_world_size(), min=1).item()
 
         # Compute all the requested losses
+
+        #outputs['pred_points'].shape = [batch_size, queries_num, 3]
         losses = {}
         for loss in self.losses:
             losses.update(self.get_loss(loss, outputs, targets, indices, num_points))
+
+        losses.update(self.loss_encoder_supervise(outputs['intermediate_memory'], targets))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
@@ -377,6 +460,9 @@ def build(args):
         model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
     matcher = build_matcher(args)
     weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_point': args.point_loss_coef}
+    if args.encoder_supervise:
+        weight_dict.update({'encoder_supervise': args.encoder_loss_coef})
+
     weight_dict['loss_giou'] = args.giou_loss_coef
     if args.masks:
         weight_dict["loss_mask"] = args.mask_loss_coef
