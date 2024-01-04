@@ -253,8 +253,8 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
         optimizer.step()
         
         if args['using_refinement'] and epoch >= args['starting_epoch'] and epoch % args['refine_interval'] == 0 and args['cur_refine_step'] < args['total_refine_step']:
-            with torch.no_grad():
-                if args['local_rank'] == 0:
+            if args['local_rank'] == 0:
+                with torch.no_grad():
                     train_data.refine_gt(fname, d6, targets, record_idx_costs)
 
     torch.cuda.synchronize()

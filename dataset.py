@@ -277,9 +277,16 @@ class listDataset(Dataset):
 
             sub_latest_kpoint = kpoint[crop_size_x: crop_size_x + width, crop_size_y:crop_size_y + height]
             target_points_idx = record_idx_cost[:, 1].long()
-            training_points = torch.as_tensor(torch.round(target['points'][...,:2][target_points_idx]*width), dtype=torch.int32) #这里会引入误差
             
             ### 这个主要是先检查
+            training_points = torch.tensor(self.get_indices_with_repeats(sub_latest_kpoint),dtype=torch.int64).view(-1, 2)[target_points_idx]
+            '''
+            # type_1 test
+            training_points = torch.as_tensor(torch.round(target['points'][...,:2][target_points_idx]*width), dtype=torch.int32) #这里会引入误差
+            gt_points = torch.tensor(self.get_indices_with_repeats(sub_latest_kpoint),dtype=torch.int64).view(-1, 2)[target_points_idx]
+            assert torch.all(training_points == gt_points)
+
+            # type_2 test 这种容易有问题
             reconstructed_mask = np.zeros((height, width), dtype=int)
             training_points_np = training_points.numpy()
             np.add.at(reconstructed_mask, (training_points_np[:, 0], training_points_np[:, 1]), 1)
@@ -289,6 +296,7 @@ class listDataset(Dataset):
             except AssertionError as e:
                 print("AssertionError:", e)
                 pdb.set_trace()
+            '''
 
             predicted_idx = record_idx_cost[:, 0].long()
             predicted_points = torch.as_tensor(output_cords[predicted_idx]*width, dtype=torch.int32)
