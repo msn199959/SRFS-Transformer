@@ -36,7 +36,7 @@ class HungarianMatcher(nn.Module):
         assert cost_class != 0 or cost_point != 0, "all costs cant be 0"
 
     @torch.no_grad()
-    def forward(self, outputs, targets):
+    def forward(self, outputs, targets, record_flag=False):
         """ Performs the matching
         Params:
             outputs: This is a dict that contains at least these entries:
@@ -56,8 +56,6 @@ class HungarianMatcher(nn.Module):
         bs, num_queries = outputs["pred_logits"].shape[:2]
 
         out_prob = outputs["pred_logits"].flatten(0, 1).sigmoid()  # [batch_size * num_queries, num_classes]
-
-
         out_point = outputs["pred_points"].flatten(0, 1)
         tgt_point = torch.cat([v["points"] for v in targets])
         tgt_ids = torch.cat([v["labels"] for v in targets])
@@ -69,8 +67,6 @@ class HungarianMatcher(nn.Module):
         pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-(out_prob + 1e-8).log())
         cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
 
-
-
         cost_point = torch.cdist(out_point, tgt_point.cuda(), p=1)
 
         C = self.cost_class * cost_class + self.cost_point * cost_point
@@ -78,8 +74,21 @@ class HungarianMatcher(nn.Module):
 
         sizes = [len(v["points"]) for v in targets]
         indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
-        return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+        results = [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
 
+        if record_flag:
+            batch_size = len(indices)
+            combined_idx_costs = []
+            for batch_index in range(batch_size):
+                # 获取当前批次中的匹配对
+                out_indices, tgt_indices = indices[batch_index]
+                # 使用 NumPy 索引从 C 中提取匹配值, type(values)=tensor
+                values = C[batch_index, out_indices, tgt_indices]
+                idx_cost = torch.stack([torch.from_numpy(out_indices),torch.from_numpy(tgt_indices), values],dim=1)
+                combined_idx_costs.append(idx_cost)
+            return results, combined_idx_costs
+        
+        return results, None
 
 def build_matcher(args):
     return HungarianMatcher(args, cost_class=args.set_cost_class, cost_point=args.set_cost_point, cost_giou=args.set_cost_giou)

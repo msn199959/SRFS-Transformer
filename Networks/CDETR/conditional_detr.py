@@ -149,7 +149,6 @@ class SetCriterion(nn.Module):
         """
         assert 'pred_logits' in outputs
         src_logits = outputs['pred_logits']
-
         idx = self._get_src_permutation_idx(indices)
         target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)]).cuda()
         target_classes = torch.full(src_logits.shape[:2], self.num_classes,
@@ -194,7 +193,6 @@ class SetCriterion(nn.Module):
         idx = self._get_src_permutation_idx(indices)
         src_points = outputs['pred_points'][idx]
         target_points = torch.cat([t['points'][i] for t, (_, i) in zip(targets, indices)], dim=0).cuda()
-
         loss_point = F.l1_loss(src_points, target_points, reduction='none')
 
         losses = {}
@@ -283,7 +281,6 @@ class SetCriterion(nn.Module):
            targets dicts must contain the key "masks" containing a tensor of dim [nb_target_points, h, w]
         """
         assert "pred_masks" in outputs  #没有计算这个loss
-
         src_idx = self._get_src_permutation_idx(indices)
         tgt_idx = self._get_tgt_permutation_idx(indices)
         src_masks = outputs["pred_masks"]
@@ -329,7 +326,7 @@ class SetCriterion(nn.Module):
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_points, **kwargs)
 
-    def forward(self, outputs, targets):
+    def forward(self, outputs, targets, return_idx_costs=False, interm_supervise=False):
         """ This performs the loss computation.
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
@@ -340,8 +337,7 @@ class SetCriterion(nn.Module):
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
 
         # Retrieve the matching between the outputs of the last layer and the targets
-        indices = self.matcher(outputs_without_aux, targets)
-
+        indices, results_idx_costs = self.matcher(outputs_without_aux, targets, record_flag=return_idx_costs)
         # Compute the average number of target points accross all nodes, for normalization purposes
         num_points = sum(len(t["labels"]) for t in targets)
         num_points = torch.as_tensor([num_points], dtype=torch.float, device=next(iter(outputs.values())).device)
@@ -361,7 +357,7 @@ class SetCriterion(nn.Module):
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
             for i, aux_outputs in enumerate(outputs['aux_outputs']):
-                indices = self.matcher(aux_outputs, targets)
+                indices, _ = self.matcher(aux_outputs, targets)
                 for loss in self.losses:
                     if loss == 'masks':
                         # Intermediate masks losses are too costly to compute, we ignore them.
@@ -374,7 +370,7 @@ class SetCriterion(nn.Module):
                     l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
 
-        return losses
+        return losses, results_idx_costs
 
 
 class PostProcess(nn.Module):
@@ -393,7 +389,6 @@ class PostProcess(nn.Module):
 
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
-
         prob = out_logits.sigmoid()
         topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), 100, dim=1)
         scores = topk_values

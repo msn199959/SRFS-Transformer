@@ -22,6 +22,8 @@ import torch
 import numpy as np
 import pdb
 from torch.utils.tensorboard import SummaryWriter  # add tensoorboard
+import shutil
+from multiprocessing import cpu_count
 
 if args.backbone == 'resnet50' or args.backbone == 'resnet101':
     from Networks.CDETR import build_model
@@ -43,10 +45,26 @@ def main(args):
     with open(test_file, 'rb') as outfile:
         test_data = np.load(outfile).tolist()
 
+    if args['using_refinement'] and args['dataset'] == 'jhu' and args['refine_replace']:
+        replace_path = './data/jhu_crowd_v2.0/train/gt_detr_map_replace_2048/'
+        source_path = './data/jhu_crowd_v2.0/train/gt_detr_map_2048'
+
+        if args['local_rank'] == 0:
+            if os.path.exists(replace_path):
+                shutil.rmtree(replace_path)
+                print('----------delete the last gt dir-----------')
+            shutil.copytree(source_path, replace_path)
+            print('-----------replace new gt dir-----------')
+
+    args['workers'] = int(cpu_count()/3)
+    if args['local_rank'] == 0:
+        print(f"using {int(cpu_count()/3)} threads loading dataset")
+
     utils.init_distributed_mode(return_args)
     model, criterion, postprocessors = build_model(return_args)
-
     model = model.cuda()
+
+    
     if args['distributed']:
         model = nn.parallel.DistributedDataParallel(model, device_ids=[args['local_rank']])
         path = './save_file/log_file/' + time.strftime("%Y%m%d_%H%M%S", time.localtime(time.time()))
@@ -69,6 +87,7 @@ def main(args):
             os.makedirs(path)
         logger = get_root_logger(path + 'debug.log')
         writer = SummaryWriter(path)
+    
 
     num_params = 0
     for param in model.parameters():
@@ -104,9 +123,6 @@ def main(args):
 
     if args['local_rank'] == 0:
         logger.info('best result={:.3f}\t start epoch={:.3f}'.format(args['best_pred'], args['start_epoch']))
-
-
-    if args['local_rank'] == 0:
         logger.info('start training!')
 
     eval_epoch = 0
@@ -200,11 +216,11 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
         drop_last=False,
         collate_fn=collate_wrapper,
         sampler=datasampler,
-        num_workers=16,
+        num_workers=args['workers'] ,
         prefetch_factor=2,
         pin_memory=True
     )
-
+    
     model.train()
     loss_log = []
 
@@ -212,7 +228,7 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
     for i, (fname, img, targets) in enumerate(train_loader):
         img = img.cuda()
         d6 = model(img)
-        loss_dict = criterion(d6, targets)
+        loss_dict, record_idx_costs = criterion(d6, targets, return_idx_costs=args['using_refinement'])
         weight_dict = criterion.weight_dict
         #pdb.set_trace()
         loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
@@ -220,9 +236,10 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
         writer.add_scalar('loss/total', loss, len(train_loader) * epoch + i)
         writer.add_scalar('loss/loss_ce', loss_dict['loss_ce'], len(train_loader) * epoch + i)
         writer.add_scalar('loss/loss_point', loss_dict['loss_point'], len(train_loader) * epoch + i)
-        writer.add_scalar('loss/loss_encoder_supervise_lr', weight_dict['encoder_supervise'], len(train_loader) * epoch + i)
-        writer.add_scalar('loss/loss_encoder_supervise', loss_dict['encoder_supervise'], len(train_loader) * epoch + i)
         writer.add_scalar('lr/lr_backbone', optimizer.param_groups[0]['lr'], len(train_loader) * epoch + i)
+        if args['encoder_supervise']:
+            writer.add_scalar('loss/loss_encoder_supervise_lr', weight_dict['encoder_supervise'], len(train_loader) * epoch + i)
+            writer.add_scalar('loss/loss_encoder_supervise', loss_dict['encoder_supervise'], len(train_loader) * epoch + i)
 
         if args['aux_loss']:
             for i in range(5):
@@ -234,13 +251,20 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        
+        if args['using_refinement'] and epoch >= args['starting_epoch'] and epoch % args['refine_interval'] == 0 and args['cur_refine_step'] < args['total_refine_step']:
+            with torch.no_grad():
+                if args['local_rank'] == 0:
+                    train_data.refine_gt(fname, d6, targets, record_idx_costs)
 
     torch.cuda.synchronize()
     epoch_time = time.time() - start
     scheduler.step()
     if args['local_rank'] == 0:
         logger.info('Training Epoch:[{}/{}]\t loss={:.5f}\t lr={:.6f}\t epoch_time={:.3f}'.format(epoch,args['epochs'],np.mean(loss_log),args['lr'], epoch_time))
-
+        if args['using_refinement'] and epoch >= args['starting_epoch'] and epoch % args['refine_interval'] == 0 and args['cur_refine_step'] < args['total_refine_step']:
+            print(f"----------Refinement at {epoch} epoch --------------")
+            args['cur_refine_step'] += 1
 
 def validate(Pre_data, model, criterion, epoch, logger, args):
     if args['local_rank'] == 0:

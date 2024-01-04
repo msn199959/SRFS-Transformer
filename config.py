@@ -153,5 +153,19 @@ parser.add_argument('--dist_url', default='env:// ', help='url used to set up di
 parser.add_argument('--master_port', default=29501, type=int,
                     help='master_port')
 
+
+# Refinement parameters
+parser.add_argument('--using_refinement',  action='store_true', help='using refined startegy')
+parser.add_argument('--cur_refine_step', type=int, default=0, help='current refine step')
+parser.add_argument('--total_refine_step', type=int, default=10, help='current refine step')
+parser.add_argument('--refine_weight', type=float, default=1.0, help='the weight of prediction')
+parser.add_argument('--refine_interval', type=int, default=3, help='the interval of refinement')
+parser.add_argument('--starting_epoch', type=int, default=40, help='the interval of refinement')
+parser.add_argument('--refine_replace', type=bool, default=False, help='the interval of refinement')
+
+# Encoder interm supervise 
+parser.add_argument('--interm_supervise',  action='store_true', help='using interm features supervise')
+parser.add_argument('--interm_loss_cof',  type=float, default=1.0, help='using refined startegy')
+
 args = parser.parse_args()
 return_args = parser.parse_args()

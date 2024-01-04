@@ -29,7 +29,6 @@ warnings.filterwarnings('ignore')
 '''fixed random seed '''
 setup_seed(args.seed)
 
-
 def main(args):
     if args['dataset'] == 'jhu':
         test_file = './npydata/jhu_val.npy'

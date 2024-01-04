@@ -7,7 +7,8 @@ from image import load_data
 import random
 from PIL import Image
 import numpy as np
-
+import h5py
+import pdb
 
 class listDataset(Dataset):
     def __init__(self, root, shape=None, shuffle=True, transform=None, train=False, seen=0, batch_size=1,
@@ -38,6 +39,7 @@ class listDataset(Dataset):
         img_path = self.lines[index]
         fname = os.path.basename(img_path)
         img, kpoint = load_data(img_path, self.args, self.train)
+        flip = False
 
         while min(kpoint.shape[0], kpoint.shape[1]) < self.args['crop_size']  and self.train == True:
             img_path = self.lines[random.randint(1, self.nSamples-1)]
@@ -49,6 +51,7 @@ class listDataset(Dataset):
             if random.random() > 0.5:
                 img = img.transpose(Image.FLIP_LEFT_RIGHT)
                 kpoint = np.fliplr(kpoint)
+                flip = True
 
             if self.args['scale_aug'] == True and random.random() > (1 - self.args['scale_p']): # random scale
                 if self.args['scale_type'] == 0:
@@ -85,6 +88,7 @@ class listDataset(Dataset):
                         img_path = self.lines[random.randint(1, self.nSamples-1)]
                         fname = os.path.basename(img_path)
                         img, kpoint = load_data(img_path, self.args, self.train)
+                        flip = False
 
                         count_none = 0
                         if self.transform is not None:
@@ -108,12 +112,11 @@ class listDataset(Dataset):
                     width = int(width / self.rate)
                     height = int(height / self.rate)
                     sub_kpoint = kpoint[crop_size_x: crop_size_x + width, crop_size_y:crop_size_y + height]
-                    sub_kpoint[sub_kpoint != 1] = 0
-                    '''num_points and points'''
+                    # sub_kpoint[sub_kpoint != 1] = 0
+                    sub_kpoint[sub_kpoint < 1] = 0
                     num_points = int(np.sum(sub_kpoint))
-                    '''points'''
-                    gt_points = np.nonzero(torch.from_numpy(sub_kpoint))
-
+                    gt_points = torch.tensor(self.get_indices_with_repeats(sub_kpoint),dtype=torch.int64).view(-1, 2)
+                    
                     distances = self.caculate_knn_distance(gt_points, num_points)
                     points = torch.cat([gt_points, distances], dim=1)
                     #points = gt_points
@@ -126,11 +129,15 @@ class listDataset(Dataset):
                 target['labels'] = torch.ones([1, num_points]).squeeze(0).type(torch.LongTensor)
                 target['points_macher'] = torch.true_divide(points, width).type(torch.FloatTensor)
                 target['points'] = torch.true_divide(points[:, 0:self.args['channel_point']], width).type(torch.FloatTensor)
+                target['average_distance'] = torch.true_divide(distances, width).type(torch.FloatTensor)
+                target['crop_bias'] = torch.tensor([crop_size_x, crop_size_y, width, height]).type(torch.int32)
+                target['flip_aug'] = torch.as_tensor(flip, dtype=torch.bool)
+                target['scale'] = torch.as_tensor(self.rate, dtype=torch.float32)
 
                 imgs.append(sub_img)
                 targets.append(target)
 
-            return fname, imgs, targets
+            return img_path, imgs, targets
 
         else:
 
@@ -168,6 +175,23 @@ class listDataset(Dataset):
             patch_info = [num_h, num_w, height, width, self.args['crop_size'], padding_w, padding_h]
             return fname, img_return, kpoint_return, targets, patch_info
 
+    def get_indices_with_repeats(self, array):
+        """
+        Get the indices of non-zero elements in the array.
+        For elements greater than 1, add indices multiple times (value - 1 times).
+
+        Parameters:
+        array (numpy.ndarray): The input array.
+
+        Returns:
+        list of tuples: A list containing the indices of non-zero elements.
+        """
+        indices = []
+        for i in range(array.shape[0]):        # 遍历行
+            for j in range(array.shape[1]):    # 遍历列
+                if array[i, j] > 0:
+                    indices.extend([[i, j]] * array[i, j])  # 根据值添加索引
+        return indices
 
     def caculate_knn_distance(self, gt_points, num_point):
 
@@ -201,5 +225,155 @@ class listDataset(Dataset):
             distances = torch.from_numpy(distances).unsqueeze(1)
 
         return distances
+    
+    def refine_gt(self, img_paths, outputs, targets, record_idx_costs):
+        '''
+        refine the latest gt(.h5) file, and save a newer(the refine_step)
+        input:
+        img_path: record img path
+        record_idx_costs: record out_idx, tgt_idx and cost
+        gt_data_dir: dir of saving gt data
+        '''
+        ## 需要注意存在 flip aug等增强操作
+
+        '''
+         outputs.keys()
+        dict_keys(['pred_logits', 'pred_points', 'aux_outputs', 'interm_outputs', 'interm_outputs_for_matching_pre', 'dn_meta'])
+        '''
+
+        assert 'pred_logits' in outputs and 'pred_points' in outputs
+        assert len(img_paths) > 0
+
+        outputs_logits_cords = {}
+        for k, v in outputs.items():
+            if k == 'pred_points' or k == 'pred_logits':
+                outputs_logits_cords[k] = v.to('cpu')
+            else:
+                continue
+        ### 保存
+        # img_paths = './data/jhu_crowd_v2.0/val/images_2048/4340.jpg'
+        gt_data_dir = os.path.split(img_paths[0])[0].replace('images', 'gt_detr_map')
+        if self.args['refine_replace'] == True:
+            last_gt_data_dir = os.path.split(img_paths[0])[0].replace('images', 'gt_detr_map_replace')
+            new_gt_data_dir = last_gt_data_dir
+            assert os.path.exists(new_gt_data_dir)
+        else:
+            if self.args['cur_refine_step'] == 0:
+                last_gt_data_dir = gt_data_dir
+                new_gt_data_dir = f'{gt_data_dir}_{1}-th'
+            else:
+                last_gt_data_dir = f"{gt_data_dir}_{self.args['cur_refine_step']}-th"
+                new_gt_data_dir = f"{gt_data_dir}_{self.args['cur_refine_step']+1}-th"
+
+            if not os.path.exists(new_gt_data_dir):
+                    os.makedirs(new_gt_data_dir)
+
+        for i, (img_path, output_confs, output_cords, target, record_idx_cost) in enumerate(zip(img_paths, outputs_logits_cords['pred_logits'], outputs_logits_cords['pred_points'][...,:2], targets, record_idx_costs)):
+            kpoint = self.load_refined_data(img_path)
+            target = {k: v.to('cpu') for k, v in target.items()}
+            crop_size_x, crop_size_y, width, height = target['crop_bias']
+            if target['flip_aug']:
+                kpoint = np.fliplr(kpoint)
+
+            sub_latest_kpoint = kpoint[crop_size_x: crop_size_x + width, crop_size_y:crop_size_y + height]
+            target_points_idx = record_idx_cost[:, 1].long()
+            training_points = torch.as_tensor(torch.round(target['points'][...,:2][target_points_idx]*width), dtype=torch.int32) #这里会引入误差
+            
+            ### 这个主要是先检查
+            reconstructed_mask = np.zeros((height, width), dtype=int)
+            training_points_np = training_points.numpy()
+            np.add.at(reconstructed_mask, (training_points_np[:, 0], training_points_np[:, 1]), 1)
+
+            try:
+                assert np.all(reconstructed_mask == sub_latest_kpoint)
+            except AssertionError as e:
+                print("AssertionError:", e)
+                pdb.set_trace()
+
+            predicted_idx = record_idx_cost[:, 0].long()
+            predicted_points = torch.as_tensor(output_cords[predicted_idx]*width, dtype=torch.int32)
+            predicted_logits = torch.as_tensor(output_confs[predicted_idx].sigmoid(), dtype=torch.float32)
+
+            cost = record_idx_cost[:, 2]
+            cost_sort_idx = torch.sort(cost).indices
+
+            sorted_predict_points = predicted_points[cost_sort_idx]
+            sorted_training_points = training_points[cost_sort_idx]
+            sorted_predict_logits = predicted_logits[cost_sort_idx][:, -1].unsqueeze(1)
+
+            pred_cof = self.args['refine_weight'] * sorted_predict_logits
+            gt_cof = 1 - pred_cof
+            refined_gt_points = (torch.round(gt_cof*sorted_training_points + pred_cof*sorted_predict_points).to(torch.int32)).numpy()
+
+            refined_results = np.zeros((height, width), dtype=int)
+            np.add.at(refined_results, (refined_gt_points[:, 0], refined_gt_points[:, 1]), 1)
+
+            kpoint[crop_size_x: crop_size_x + width, crop_size_y:crop_size_y + height] = refined_results
+
+            if target['flip_aug']:
+                kpoint = np.fliplr(kpoint)
+            
+            self.save_refined_data(img_path, last_gt_data_dir, new_gt_data_dir, kpoint)
+
+
+    def load_refined_data(self, img_path):
+        if self.args['using_refinement'] == False:
+            gt_path = img_path.replace('.jpg', '.h5').replace('images', 'gt_detr_map')
+        else:
+            if self.args['refine_replace'] == True:
+                gt_path = img_path.replace('.jpg', '.h5').replace('images', 'gt_detr_map_replace')
+            else:
+                if self.args['cur_refine_step'] == 0:
+                    # 第0step依旧用原始的加载
+                    gt_path = img_path.replace('.jpg', '.h5').replace('images', 'gt_detr_map')
+                else:
+                    gt_path = img_path.replace('.jpg', '.h5').replace('images', 'gt_detr_map')
+                    gt_split = os.path.split(gt_path)
+                    gt_path = '/'.join([gt_split[0]+f"_{self.args['cur_refine_step']}-th", gt_split[1]])
+        while True:
+            try:
+                gt_file = h5py.File(gt_path)
+                k = np.asarray(gt_file['kpoint'])
+                break
+            except OSError:
+                break
+        k = k.copy()
+        return k
+    
+    def save_refined_data(self, img_path, last_dir, output_dir, modified_kpoint_data):
+        '''
+        img_path: record h5 idx
+        last_dir: load the last gt
+        output_dir: save the new gt
+        point_content: 
+        '''
+        gt_postfix = os.path.split(img_path)[-1].replace('.jpg', '.h5')
+
+        original_file_path = os.path.join(last_dir, gt_postfix)
+        new_file_path = os.path.join(output_dir, gt_postfix)
+
+        assert os.path.exists(original_file_path) and os.path.exists(output_dir)
+
+        if self.args['refine_replace']==True:
+            with h5py.File(new_file_path, 'r+') as file:
+                # 假设'kpoint'是文件中的一个数据集
+                if 'kpoint' in file:
+                    file['kpoint'][...] = modified_kpoint_data
+                else:
+                    print("'kpoint' not found in the file")
+        else:
+            with h5py.File(original_file_path, 'r') as original_file:
+                # 创建新的 H5 文件，准备将修改后的内容写入其中
+                with h5py.File(new_file_path, 'w') as new_file:
+                    # 复制原始文件的组结构和数据集（除了'kpoint'部分）
+                    for item_name in original_file:
+                        if item_name != 'kpoint':
+                            original_item = original_file[item_name]
+                            new_file.copy(original_item, new_file)
+
+                    # 将修改后的'kpoint'数据写入新文件
+                    new_file.create_dataset('kpoint', data=modified_kpoint_data)
+
+        assert os.path.exists(new_file_path)
 
 
