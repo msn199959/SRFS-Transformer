@@ -60,13 +60,13 @@ class Transformer(nn.Module):
     def __init__(self, d_model=512, nhead=8, num_queries=300, num_encoder_layers=6,
                  num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False,
-                 return_intermediate_dec=False):
+                 return_intermediate_dec=False, encoder_interm_supervise=False):
         super().__init__()
 
         encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
                                                 dropout, activation, normalize_before)
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
-        self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm, using_encoder_supervise=True)
+        self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm, encoder_interm_supervise=self.encoder_interm_supervise)
 
         decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward,
                                                 dropout, activation, normalize_before)
@@ -80,7 +80,7 @@ class Transformer(nn.Module):
         self.d_model = d_model
         self.nhead = nhead
         self.dec_layers = num_decoder_layers
-        self.encoder_supervise = True
+        self.encoder_interm_supervise = encoder_interm_supervise
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -105,12 +105,12 @@ class Transformer(nn.Module):
 
 class TransformerEncoder(nn.Module):
 
-    def __init__(self, encoder_layer, num_layers, norm=None, using_encoder_supervise=False):
+    def __init__(self, encoder_layer, num_layers, norm=None, encoder_interm_supervise=False):
         super().__init__()
         self.layers = _get_clones(encoder_layer, num_layers)
         self.num_layers = num_layers
         self.norm = norm
-        self.using_encoder_supervise = using_encoder_supervise
+        self.encoder_interm_supervise = encoder_interm_supervise
         self.id = 0
 
     def forward(self, src,
@@ -120,31 +120,31 @@ class TransformerEncoder(nn.Module):
 
         #self.id +=1 
         output = src
-        layer_num = 0 
+        # layer_num = 0 
         intermediate = []
 
         for layer in self.layers:
             output = layer(output, src_mask=mask,
                            src_key_padding_mask=src_key_padding_mask, pos=pos)
-            #self.visualize_and_save_feature_maps_as_images(output, self.id, layer_num)
-            layer_num += 1
+            # self.visualize_and_save_feature_maps_as_images(output, self.id, layer_num)
+            # layer_num += 1
 
             #append new encoder loss
-            if self.using_encoder_supervise:
+            if self.encoder_interm_supervise:
                 intermediate.append(output)  #这里是否需要做norm
         
         if self.norm is not None:
             output = self.norm(output)
 
             #append new encoder loss
-            if self.using_encoder_supervise:
+            if self.encoder_interm_supervise:
                 intermediate.pop()
                 intermediate.append(output)
 
         #torch.stack(intermediate).shape = [6, 64, batch_size/img_patches, 256]
         #torch.stack(intermediate).transpose(1, 2).shape = [6, batch_size/img_patches, 64, 256]
 
-        if self.using_encoder_supervise:
+        if self.encoder_interm_supervise:
             # 只要最后两层
             return output, torch.stack(intermediate).transpose(1, 2)[-2:,...]
 
@@ -476,6 +476,7 @@ def build_transformer(args):
         num_decoder_layers=args.dec_layers,
         normalize_before=args.pre_norm,
         return_intermediate_dec=True,
+        encoder_interm_supervise=args.encoder_interm_supervise
     )
 
 

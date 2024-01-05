@@ -6,4 +6,4 @@ save_file/
 data/
 images/
 *.png
-test_demo*.py
+test_*.py

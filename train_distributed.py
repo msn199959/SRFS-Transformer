@@ -237,7 +237,7 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
         writer.add_scalar('loss/loss_ce', loss_dict['loss_ce'], len(train_loader) * epoch + i)
         writer.add_scalar('loss/loss_point', loss_dict['loss_point'], len(train_loader) * epoch + i)
         writer.add_scalar('lr/lr_backbone', optimizer.param_groups[0]['lr'], len(train_loader) * epoch + i)
-        if args['encoder_supervise']:
+        if args['encoder_interm_supervise']:
             writer.add_scalar('loss/loss_encoder_supervise_lr', weight_dict['encoder_supervise'], len(train_loader) * epoch + i)
             writer.add_scalar('loss/loss_encoder_supervise', loss_dict['encoder_supervise'], len(train_loader) * epoch + i)
 

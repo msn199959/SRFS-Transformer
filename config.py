@@ -107,9 +107,6 @@ parser.add_argument('--pre_norm', action='store_true')
 parser.add_argument('--masks', action='store_true',
                     help="Train segmentation head if the flag is provided")
 
-parser.add_argument('--encoder_supervise', action='store_true',
-                    help="Train segmentation head if the flag is provided")
-
 # Loss
 parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
                     help="Disables auxiliary decoding losses (loss at each layer)")
@@ -164,7 +161,7 @@ parser.add_argument('--starting_epoch', type=int, default=40, help='the interval
 parser.add_argument('--refine_replace', type=bool, default=False, help='the interval of refinement')
 
 # Encoder interm supervise 
-parser.add_argument('--interm_supervise',  action='store_true', help='using interm features supervise')
+parser.add_argument('--encoder_interm_supervise',  action='store_true', help='using interm features supervise')
 parser.add_argument('--interm_loss_cof',  type=float, default=1.0, help='using refined startegy')
 
 args = parser.parse_args()
