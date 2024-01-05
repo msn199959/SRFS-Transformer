@@ -172,7 +172,7 @@ def validate(Pre_data, model, criterion, logger, args):
         with torch.no_grad():
             img = img.cuda()
             outputs = model(img)
-
+        import pdb;pdb.set_trace()
         out_logits, out_point = outputs['pred_logits'], outputs['pred_points']
         prob = out_logits.sigmoid()
         prob = prob.view(1, -1, 2)

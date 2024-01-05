@@ -145,6 +145,7 @@ class TransformerEncoder(nn.Module):
         #torch.stack(intermediate).transpose(1, 2).shape = [6, batch_size/img_patches, 64, 256]
 
         if self.using_encoder_supervise:
+            # 只要最后两层
             return output, torch.stack(intermediate).transpose(1, 2)[-2:,...]
 
         return output, None

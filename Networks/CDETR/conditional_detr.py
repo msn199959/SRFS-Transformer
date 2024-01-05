@@ -261,8 +261,7 @@ class SetCriterion(nn.Module):
         # 执行最小-最大缩放归一化
         tensor_normalized = (input_tensor - tensor_min) / delta
         return tensor_normalized
-
-
+    
     def wasserstein_distance_tensor_global(self, tensor1, tensor2):
         if not tensor1.is_cuda or not tensor2.is_cuda:
             raise ValueError("Tensors must be on GPU.")

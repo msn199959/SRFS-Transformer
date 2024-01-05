@@ -253,9 +253,8 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
         optimizer.step()
         
         if args['using_refinement'] and epoch >= args['starting_epoch'] and epoch % args['refine_interval'] == 0 and args['cur_refine_step'] < args['total_refine_step']:
-            if args['local_rank'] == 0:
-                with torch.no_grad():
-                    train_data.refine_gt(fname, d6, targets, record_idx_costs)
+            with torch.no_grad():
+                train_data.refine_gt(fname, d6, targets, record_idx_costs)
 
     torch.cuda.synchronize()
     epoch_time = time.time() - start
@@ -263,7 +262,7 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
     if args['local_rank'] == 0:
         logger.info('Training Epoch:[{}/{}]\t loss={:.5f}\t lr={:.6f}\t epoch_time={:.3f}'.format(epoch,args['epochs'],np.mean(loss_log),args['lr'], epoch_time))
         if args['using_refinement'] and epoch >= args['starting_epoch'] and epoch % args['refine_interval'] == 0 and args['cur_refine_step'] < args['total_refine_step']:
-            print(f"----------Refinement at {epoch} epoch --------------")
+            logger.info(f"----------Refinement at {epoch} epoch --------------")
             args['cur_refine_step'] += 1
 
 def validate(Pre_data, model, criterion, epoch, logger, args):
