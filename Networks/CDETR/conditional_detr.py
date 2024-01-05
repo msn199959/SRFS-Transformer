@@ -235,7 +235,8 @@ class SetCriterion(nn.Module):
         return grid
     
     def loss_encoder_supervise(self, u_values, v_values):
-        # u_values = intermediate_memory
+        #import pdb;pdb.set_trace()
+        # u_values = intermediate_memory [2, b, 64, 256] 256=channels
         # v_values = target
         u_values = torch.mean(u_values, dim=3, keepdim=True).squeeze() #[2,batch_size, 64] 
         _, batch_size, _ = u_values.shape 
@@ -250,6 +251,20 @@ class SetCriterion(nn.Module):
 
         losses = {'encoder_supervise': torch.mean(torch.abs(u_values_normlized - v_values_normlized))}
         return losses
+    
+    def downsample_tensor(tensor, block_size):
+        """
+        Downsample a tensor by summing up values in each block.
+        
+        :param tensor: Input 2D tensor.
+        :param block_size: Tuple of ints, the size of the blocks to sum over. 下采样倍数
+        :return: Downsampled 2D tensor.
+        """
+        # Reshape and sum up values in each block
+        downsampled = tensor.unfold(0, block_size[0], block_size[0]) \
+                            .unfold(1, block_size[1], block_size[1]) \
+                            .sum(dim=(2, 3))
+        return downsampled
     
     def min_max_norm(self, input_tensor):
         tensor_min = input_tensor.min(dim=-1, keepdim=True)[0]
@@ -475,7 +490,8 @@ def build(args):
     if args.masks:
         losses += ["masks"]
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
-                             focal_alpha=args.focal_alpha, losses=losses)
+                             focal_alpha=args.focal_alpha, losses=losses,
+                             encoder_interm_supervise=args.encoder_interm_supervise)
     criterion.to(device)
     postprocessors = {'point': PostProcess()}
     if args.masks:

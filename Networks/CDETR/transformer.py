@@ -63,6 +63,7 @@ class Transformer(nn.Module):
                  return_intermediate_dec=False, encoder_interm_supervise=False):
         super().__init__()
 
+        self.encoder_interm_supervise = encoder_interm_supervise
         encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
                                                 dropout, activation, normalize_before)
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
@@ -76,12 +77,10 @@ class Transformer(nn.Module):
                                           d_model=d_model)
 
         self._reset_parameters()
-
         self.d_model = d_model
         self.nhead = nhead
         self.dec_layers = num_decoder_layers
-        self.encoder_interm_supervise = encoder_interm_supervise
-
+        
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:

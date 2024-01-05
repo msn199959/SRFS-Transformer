@@ -230,7 +230,6 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
         d6 = model(img)
         loss_dict, record_idx_costs = criterion(d6, targets, return_idx_costs=args['using_refinement'])
         weight_dict = criterion.weight_dict
-        #pdb.set_trace()
         loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
         writer.add_scalar('loss/total', loss, len(train_loader) * epoch + i)
