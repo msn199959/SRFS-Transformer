@@ -159,6 +159,8 @@ parser.add_argument('--refine_weight', type=float, default=1.0, help='the weight
 parser.add_argument('--refine_interval', type=int, default=3, help='the interval of refinement')
 parser.add_argument('--starting_epoch', type=int, default=40, help='the interval of refinement')
 parser.add_argument('--refine_replace', type=bool, default=False, help='the interval of refinement')
+parser.add_argument('--train_number', type=int, default=0, help='using to distinguish between different experiments')
+
 
 # Encoder interm supervise 
 parser.add_argument('--encoder_interm_supervise',  action='store_true', help='using interm features supervise')

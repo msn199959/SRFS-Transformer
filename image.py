@@ -10,7 +10,7 @@ def load_data(img_path, args, train=True):
             gt_path = img_path.replace('.jpg', '.h5').replace('images', 'gt_detr_map')
         else:
             if args['refine_replace'] == True:
-                gt_path = img_path.replace('.jpg', '.h5').replace('images', 'gt_detr_map_replace')
+                gt_path = img_path.replace('.jpg', '.h5').replace('images', f"gt_detr_map_replace_{args['train_number']}")
             else:
                 if args['cur_refine_step'] == 0:
                     # 第0step依旧用原始的加载

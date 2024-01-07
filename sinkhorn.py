@@ -5,7 +5,13 @@ def sinkhorn_distance_torch(tensor_a, tensor_b, reg, num_iters=100):
     n = tensor_a.size(1)
     a, b = torch.ones(n,).to(tensor_a.device) / n, torch.ones(n,).to(tensor_b.device) / n
 
-    M = torch.cdist(tensor_a, tensor_b, p=2)
+    # M = torch.cdist(tensor_a, tensor_b, p=2)
+    # 创建成本矩阵
+    N2 = n*n
+    # 使用 PyTorch 的广播和向量化操作来创建成本矩阵
+    # 生成网格以表示每个元素的坐标
+    M = torch.tensor([[i, j] for i in range(n) for j in range(n)], dtype=torch.float32)
+
     print(M)
     K = torch.exp(-M / reg)
     Kp = (1 / a).unsqueeze(0) * K

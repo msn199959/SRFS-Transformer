@@ -254,7 +254,7 @@ class listDataset(Dataset):
         # img_paths = './data/jhu_crowd_v2.0/val/images_2048/4340.jpg'
         gt_data_dir = os.path.split(img_paths[0])[0].replace('images', 'gt_detr_map')
         if self.args['refine_replace'] == True:
-            last_gt_data_dir = os.path.split(img_paths[0])[0].replace('images', 'gt_detr_map_replace')
+            last_gt_data_dir = os.path.split(img_paths[0])[0].replace('images', f"gt_detr_map_replace_{self.args['train_number']}")
             new_gt_data_dir = last_gt_data_dir
             assert os.path.exists(new_gt_data_dir)
         else:
@@ -329,7 +329,7 @@ class listDataset(Dataset):
             gt_path = img_path.replace('.jpg', '.h5').replace('images', 'gt_detr_map')
         else:
             if self.args['refine_replace'] == True:
-                gt_path = img_path.replace('.jpg', '.h5').replace('images', 'gt_detr_map_replace')
+                gt_path = img_path.replace('.jpg', '.h5').replace('images', f"gt_detr_map_replace_{self.args['train_number']}")
             else:
                 if self.args['cur_refine_step'] == 0:
                     # 第0step依旧用原始的加载
@@ -383,5 +383,3 @@ class listDataset(Dataset):
                     new_file.create_dataset('kpoint', data=modified_kpoint_data)
 
         assert os.path.exists(new_file_path)
-
-

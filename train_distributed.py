@@ -46,15 +46,15 @@ def main(args):
         test_data = np.load(outfile).tolist()
 
     if args['using_refinement'] and args['dataset'] == 'jhu' and args['refine_replace']:
-        replace_path = './data/jhu_crowd_v2.0/train/gt_detr_map_replace_2048/'
+        replace_path = f"./data/jhu_crowd_v2.0/train/gt_detr_map_replace_{args['train_number']}_2048/"
         source_path = './data/jhu_crowd_v2.0/train/gt_detr_map_2048'
 
         if args['local_rank'] == 0:
             if os.path.exists(replace_path):
                 shutil.rmtree(replace_path)
-                print('----------delete the last gt dir-----------')
+                print(f'----------delete the last gt dir {source_path} -----------')
             shutil.copytree(source_path, replace_path)
-            print('-----------replace new gt dir-----------')
+            print(f'-----------replace new gt dir {replace_path}-----------')
 
     args['workers'] = int(cpu_count()/3)
     if args['local_rank'] == 0:
@@ -127,14 +127,10 @@ def main(args):
 
     eval_epoch = 0
     for epoch in range(args['start_epoch'], args['epochs'] + 1):
-
         train(train_data, model, criterion, optimizer, epoch, scheduler, logger, writer, args)
-
         torch.cuda.empty_cache() #显存清理
-
         '''inference '''
         if epoch % args['test_per_epoch'] == 0 and epoch >= 0:
-
             pred_mae, pred_mse, visi = validate(test_data, model, criterion, epoch, logger, args)
 
             writer.add_scalar('Metrcis/MAE', pred_mae, eval_epoch)
@@ -142,7 +138,6 @@ def main(args):
 
             # save_result
             if args['save']:
-
                 is_best = pred_mae < args['best_pred']
                 args['best_pred'] = min(pred_mae, args['best_pred'])
                 save_checkpoint({
@@ -152,8 +147,6 @@ def main(args):
                     'best_prec1': args['best_pred'],
                     'optimizer': optimizer.state_dict(),
                 }, visi, is_best, args['save_path'])
-
-            end = time.time()
 
             if args['local_rank'] == 0:
                 logger.info(

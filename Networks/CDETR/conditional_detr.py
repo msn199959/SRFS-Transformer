@@ -206,7 +206,7 @@ class SetCriterion(nn.Module):
         # losses['loss_giou'] = 0.0
         return losses
 
-    def wasserstein_distance_1d(u_values, v_values):
+    def wasserstein_distance_1d(self, u_values, v_values):
         """计算一维分布之间的Wasserstein距离"""
         u_sorted, _ = torch.sort(u_values)
         v_sorted, _ = torch.sort(v_values)
@@ -252,19 +252,88 @@ class SetCriterion(nn.Module):
         losses = {'encoder_supervise': torch.mean(torch.abs(u_values_normlized - v_values_normlized))}
         return losses
     
-    def downsample_tensor(tensor, block_size):
+    def loss_encoder_supervise_OT(self, u_values, v_values):
+        #import pdb;pdb.set_trace()
+        # u_values = intermediate_memory [2, b, 64, 256] 256=channels
+        # v_values = target
+        u_values = torch.mean(u_values, dim=3, keepdim=True).squeeze() #[2,batch_size, 64] 
+        _, batch_size, _ = u_values.shape 
+        v_values = [self.target_map_to_grid(v_value['points']) for v_value in v_values]
+        v_values = torch.stack(v_values).transpose(1,2).cuda()
+        v_values = v_values.reshape(batch_size,-1) #[batch_size, 64]
+
+        u_values_normlized = 1 - self.min_max_norm(u_values) #[2,batch_size, 64]
+
+        v_values_softmax = self.softmax_on_nonzero_with_fallback(v_values)
+        v_values_softmax = v_values_softmax.unsqueeze(1).expand(-1, 2, -1) # [batch_size, 2, 64]
+        u_values_softmax = F.softmax(u_values_normlized, dim=1).permute(1, 0, 2) #[batch_size, 2, 64]
+
+        # losses = {'encoder_supervise': torch.mean(torch.abs(u_values_softmax - v_values_softmax))}
+        losses = {'encoder_supervise': torch.mean(torch.abs(u_values_softmax - v_values_softmax))}
+        return losses
+    
+    def softmax_on_nonzero_with_fallback(self, tensor):
+        # 创建一个掩码，标记非零元素
+        mask = tensor != 0
+        # 初始化一个全零的输出tensor
+        output_tensor = torch.zeros_like(tensor)
+
+        # 对每个batch内的非零元素应用softmax
+        for i in range(tensor.size(0)):
+            # 提取非零元素
+            non_zero_elements = tensor[i][mask[i]]
+            # 检查是否有非零元素
+            if len(non_zero_elements) > 0:
+                # 对非零元素应用softmax
+                softmax_non_zero_elements = F.softmax(non_zero_elements, dim=0)
+                # 将softmax结果放回原位置
+                output_tensor[i][mask[i]] = softmax_non_zero_elements
+            else:
+                # 如果所有元素都是零，则将每个元素设置为1/shape[1]
+                output_tensor[i] = 1.0 / tensor.size(1)
+
+        return output_tensor
+    
+    def sinkhorn_iterations_batched(a, b, M, reg, num_iters=100):
         """
-        Downsample a tensor by summing up values in each block.
+        Perform Sinkhorn iterations for batched inputs with an additional dimension.
         
-        :param tensor: Input 2D tensor.
-        :param block_size: Tuple of ints, the size of the blocks to sum over. 下采样倍数
-        :return: Downsampled 2D tensor.
+        :param a: Batched source histograms (tensor of shape [batch_size, 2, n*n]).
+        :param b: Batched target histograms (tensor of shape [batch_size, 2, n*n]).
+        :param M: Cost matrix.
+        :param reg: Regularization term.
+        :param num_iters: Number of iterations.
+        :return: Total loss calculated over all batches and transport matrices.
         """
-        # Reshape and sum up values in each block
-        downsampled = tensor.unfold(0, block_size[0], block_size[0]) \
-                            .unfold(1, block_size[1], block_size[1]) \
-                            .sum(dim=(2, 3))
-        return downsampled
+        batch_size, channels = a.shape[0],a.shape[1]
+        total_loss = 0
+
+        # Assuming the third dimension of a and b is n*n
+        n_square = a.shape[2]
+        transport_matrices = torch.zeros(batch_size, 2, n_square, n_square)
+
+        for i in range(batch_size):
+            for j in range(channels):
+                a_batch = a[i, j, :].squeeze()
+                b_batch = b[i, j, :].squeeze()
+                K = torch.exp(-M / reg)
+                Kp = (1 / a_batch).unsqueeze(1) * K
+
+                u = torch.ones_like(a_batch)
+                for _ in range(num_iters):
+                    v = b_batch / (K.T @ u)
+                    u = 1 / (Kp @ v)
+
+                transport_matrix = u.unsqueeze(1) * K * v.unsqueeze(0)
+                transport_matrices[i, j, :, :] = transport_matrix
+
+                # Calculate the loss for this pair (e.g., as the Frobenius norm of the transport matrix)
+                # batch_loss = torch.norm(transport_matrix, p='fro') 这是对转移矩阵求范式作为损失
+                batch_loss = torch.sum(transport_matrix * M) # 这是转移乘cost
+                total_loss += batch_loss
+
+        total_loss = total_loss/batch_size
+        return total_loss
     
     def min_max_norm(self, input_tensor):
         tensor_min = input_tensor.min(dim=-1, keepdim=True)[0]
@@ -287,7 +356,7 @@ class SetCriterion(nn.Module):
         flat_tensor2 = tensor2.view(-1)
 
         # 计算Wasserstein距离
-        wd = wasserstein_distance_1d(flat_tensor1, flat_tensor2)
+        wd = self.wasserstein_distance_1d(flat_tensor1, flat_tensor2)
 
         return wd
 
@@ -368,7 +437,8 @@ class SetCriterion(nn.Module):
             losses.update(self.get_loss(loss, outputs, targets, indices, num_points))
         
         if self.encoder_interm_supervise:
-            losses.update(self.loss_encoder_supervise(outputs['intermediate_memory'], targets))
+            #losses.update(self.loss_encoder_supervise(outputs['intermediate_memory'], targets))
+            losses.update(self.loss_encoder_supervise_OT(outputs['intermediate_memory'], targets))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
