@@ -261,12 +261,15 @@ class SetCriterion(nn.Module):
         v_values = [self.target_map_to_grid(v_value['points']) for v_value in v_values]
         v_values = torch.stack(v_values).transpose(1,2).cuda()
         v_values = v_values.reshape(batch_size,-1) #[batch_size, 64]
-
+        # u_values_normlized = 1 - self.min_max_norm(u_values) #[2,batch_size, 64]
+        # u_values_softmax = F.softmax(u_values_normlized, dim=1).permute(1, 0, 2) #[batch_size, 2, 64]
+        u_values = u_values.permute(1, 0, 2)
         u_values_normlized = 1 - self.min_max_norm(u_values) #[2,batch_size, 64]
+        u_values_softmax = F.softmax(u_values_normlized, dim=-1) #[batch_size, 2, 64]
 
-        v_values_softmax = self.softmax_on_nonzero_with_fallback(v_values)
+        v_values_float = v_values.to(dtype=torch.float32)
+        v_values_softmax = self.softmax_on_nonzero_with_fallback(v_values_float)
         v_values_softmax = v_values_softmax.unsqueeze(1).expand(-1, 2, -1) # [batch_size, 2, 64]
-        u_values_softmax = F.softmax(u_values_normlized, dim=1).permute(1, 0, 2) #[batch_size, 2, 64]
 
         # losses = {'encoder_supervise': torch.mean(torch.abs(u_values_softmax - v_values_softmax))}
         losses = {'encoder_supervise': torch.mean(torch.abs(u_values_softmax - v_values_softmax))}

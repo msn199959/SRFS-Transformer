@@ -146,7 +146,6 @@ def validate(Pre_data, model, criterion, logger, args):
                             transform=transforms.Compose([
                                 transforms.ToTensor(), transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                                             std=[0.229, 0.224, 0.225]),
-
                             ]),
                             args=args, train=False),
         batch_size=1,
@@ -167,12 +166,21 @@ def validate(Pre_data, model, criterion, logger, args):
         if len(kpoint.shape) == 5:
             kpoint = kpoint.squeeze(0)
 
-        #save_img_patch(fname, img)
+        save_img_patch(i, img)
 
         with torch.no_grad():
             img = img.cuda()
             outputs = model(img)
+        '''
+        interm_features = outputs['intermediate_memory']
+        batch = interm_features.shape[1]
+        interm_features = interm_features.reshape(2, batch, 256, 8, 8).transpose(0, 1)
+        interm_features = interm_features.mean(dim=2)
+        interm_features = min_max_norm(interm_features)
+        kpoint = sum_region(kpoint)
         import pdb;pdb.set_trace()
+        '''
+
         out_logits, out_point = outputs['pred_logits'], outputs['pred_points']
         prob = out_logits.sigmoid()
         prob = prob.view(1, -1, 2)
@@ -200,6 +208,28 @@ def validate(Pre_data, model, criterion, logger, args):
     print('mae', mae, 'mse', mse)
     return mae, mse, visi
 
+
+def min_max_norm(input_tensor):
+    # Min and max values calculated over the last two dimensions (for each 8x8 tensor)
+    tensor_min = input_tensor.min(dim=-1, keepdim=True)[0].min(dim=-2, keepdim=True)[0]
+    tensor_max = input_tensor.max(dim=-1, keepdim=True)[0].max(dim=-2, keepdim=True)[0]
+
+    # Prevent division by zero
+    delta = tensor_max - tensor_min
+    delta[delta == 0] = 1
+
+    # Perform min-max scaling normalization
+    tensor_normalized = (input_tensor - tensor_min) / delta
+    return tensor_normalized
+
+def sum_region(kpoint):
+    batch_size = kpoint.shape[0]
+
+    # Reshaping and summing to get the desired output of size [batch_size, 1, 8, 8]
+    output_tensor_binary = kpoint.reshape(batch_size, 1, 8, 32, 8, 32).sum(dim=[3, 5])
+
+    return output_tensor_binary
+
 def save_img_patch(fname, img):
     save_dir = './save_raw_img_patch'
     if os.path.exists(save_dir) == False:
@@ -215,6 +245,8 @@ def save_img_patch(fname, img):
     # 准备转换操作
     to_pil = transforms.ToPILImage()
 
+    img_name = fname+1
+
     # 遍历并保存每个图像
     for i in range(img.shape[0]):
         # 反标准化
@@ -222,7 +254,6 @@ def save_img_patch(fname, img):
         # 转换为 PIL 图像
         img_pil = to_pil(img_normalized)
         # 保存图像
-        img_name = fname[0].split('.')[0]
         img_pil.save(os.path.join(save_dir, f'{img_name}_patch_{i}.png'))
 
 

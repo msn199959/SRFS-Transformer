@@ -75,7 +75,8 @@ def main(args):
             logger = get_root_logger(path + '/1.log')
         else:
             logger = get_root_logger('./save_file/log_file/debug/debug.log')
-        writer = SummaryWriter(path)
+        if args['local_rank'] == 0:
+            writer = SummaryWriter(path)
 
     else:
         args['train_patch'] = True
@@ -86,7 +87,8 @@ def main(args):
         if not os.path.exists(args['save_path']):
             os.makedirs(path)
         logger = get_root_logger(path + 'debug.log')
-        writer = SummaryWriter(path)
+        if args['local_rank'] == 0:
+            writer = SummaryWriter(path)
     
 
     num_params = 0
@@ -118,7 +120,7 @@ def main(args):
             logger.info("=> no checkpoint found at '{}'".format(args['pre']))
 
     print('best result:', args['best_pred'])
-    logger.info('best result = {:.3f}'.format(args['best_pred']))
+    #logger.info('best result = {:.3f}'.format(args['best_pred']))
     torch.set_num_threads(args['workers'])
 
     if args['local_rank'] == 0:
@@ -132,9 +134,9 @@ def main(args):
         '''inference '''
         if epoch % args['test_per_epoch'] == 0 and epoch >= 0:
             pred_mae, pred_mse, visi = validate(test_data, model, criterion, epoch, logger, args)
-
-            writer.add_scalar('Metrcis/MAE', pred_mae, eval_epoch)
-            writer.add_scalar('Metrcis/MSE', pred_mse, eval_epoch)
+            if args['local_rank'] == 0:
+                writer.add_scalar('Metrcis/MAE', pred_mae, eval_epoch)
+                writer.add_scalar('Metrcis/MSE', pred_mse, eval_epoch)
 
             # save_result
             if args['save']:
@@ -217,26 +219,27 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
     model.train()
     loss_log = []
 
-    criterion.weight_dict['encoder_supervise'] = max(0.5*(100-epoch)/100, 0)
+    # criterion.weight_dict['encoder_supervise'] = max(0.5*(100-epoch)/100, 0)
+    criterion.weight_dict['encoder_supervise'] = 0.5
     for i, (fname, img, targets) in enumerate(train_loader):
         img = img.cuda()
         d6 = model(img)
         loss_dict, record_idx_costs = criterion(d6, targets, return_idx_costs=args['using_refinement'])
         weight_dict = criterion.weight_dict
         loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
+        if args['local_rank'] == 0:
+            writer.add_scalar('loss/total', loss, len(train_loader) * epoch + i)
+            writer.add_scalar('loss/loss_ce', loss_dict['loss_ce'], len(train_loader) * epoch + i)
+            writer.add_scalar('loss/loss_point', loss_dict['loss_point'], len(train_loader) * epoch + i)
+            writer.add_scalar('lr/lr_backbone', optimizer.param_groups[0]['lr'], len(train_loader) * epoch + i)
+            if args['encoder_interm_supervise']:
+                writer.add_scalar('loss/loss_encoder_supervise_lr', weight_dict['encoder_supervise'], len(train_loader) * epoch + i)
+                writer.add_scalar('loss/loss_encoder_supervise', loss_dict['encoder_supervise'], len(train_loader) * epoch + i)
 
-        writer.add_scalar('loss/total', loss, len(train_loader) * epoch + i)
-        writer.add_scalar('loss/loss_ce', loss_dict['loss_ce'], len(train_loader) * epoch + i)
-        writer.add_scalar('loss/loss_point', loss_dict['loss_point'], len(train_loader) * epoch + i)
-        writer.add_scalar('lr/lr_backbone', optimizer.param_groups[0]['lr'], len(train_loader) * epoch + i)
-        if args['encoder_interm_supervise']:
-            writer.add_scalar('loss/loss_encoder_supervise_lr', weight_dict['encoder_supervise'], len(train_loader) * epoch + i)
-            writer.add_scalar('loss/loss_encoder_supervise', loss_dict['encoder_supervise'], len(train_loader) * epoch + i)
-
-        if args['aux_loss']:
-            for i in range(5):
-                writer.add_scalar(f'loss/loss_point_{i}', loss_dict[f'loss_point_{i}'], len(train_loader) * epoch + i)
-                writer.add_scalar(f'loss/loss_ce_{i}', loss_dict[f'loss_ce_{i}'], len(train_loader) * epoch + i)
+            if args['aux_loss']:
+                for i in range(5):
+                    writer.add_scalar(f'loss/loss_point_{i}', loss_dict[f'loss_point_{i}'], len(train_loader) * epoch + i)
+                    writer.add_scalar(f'loss/loss_ce_{i}', loss_dict[f'loss_ce_{i}'], len(train_loader) * epoch + i)
 
         loss_log.append(loss.item())
 

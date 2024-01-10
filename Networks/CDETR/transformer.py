@@ -117,17 +117,22 @@ class TransformerEncoder(nn.Module):
                 src_key_padding_mask: Optional[Tensor] = None,
                 pos: Optional[Tensor] = None):
 
-        #self.id +=1 
         output = src
-        # layer_num = 0 
         intermediate = []
+        '''
+        self.id +=1 
+        layer_num = 0 
+        '''
 
         for layer in self.layers:
             output = layer(output, src_mask=mask,
                            src_key_padding_mask=src_key_padding_mask, pos=pos)
-            # self.visualize_and_save_feature_maps_as_images(output, self.id, layer_num)
-            # layer_num += 1
-
+            '''
+            if layer_num >= 4:
+                self.visualize_and_save_feature_maps_as_images(output, self.id, layer_num)
+            layer_num += 1
+            '''
+        
             #append new encoder loss
             if self.encoder_interm_supervise:
                 intermediate.append(output)  #这里是否需要做norm
