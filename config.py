@@ -22,8 +22,8 @@ parser.add_argument('--batch_size', type=int, default=16,
                     help='input batch size for training')
 parser.add_argument('--crop_size', type=int, default=256,
                     help='crop size for training')
-parser.add_argument('--lr_step', type=int, default=1200,
-                    help='lr_step')
+# parser.add_argument('--lr_step', type=int, default=1200,help='lr_step')
+parser.add_argument('--lr_step', type=list, default=[140, 500], help='lr_step')
 parser.add_argument('--seed', type=int, default=1,
                     help='random seed')
 parser.add_argument('--best_pred', type=int, default=1e5,
@@ -58,6 +58,8 @@ parser.add_argument('--min_num', type=int, default=-1,
 parser.add_argument('--num_knn', type=int, default=4,
                     help='number of knn')
 parser.add_argument('--test_per_epoch', type=int, default=20,
+                    help='test_per_epoch')
+parser.add_argument('--test_start_epoch', type=int, default=40,
                     help='test_per_epoch')
 parser.add_argument('--threshold', type=float, default=0.35,
                     help='threshold to filter the negative points')
@@ -125,7 +127,6 @@ parser.add_argument('--dice_loss_coef', default=1, type=float)
 parser.add_argument('--cls_loss_coef', default=2, type=float)
 parser.add_argument('--count_loss_coef', default=2, type=float)
 parser.add_argument('--point_loss_coef', default=5, type=float)
-parser.add_argument('--encoder_loss_coef', default=0.5, type=float)
 parser.add_argument('--giou_loss_coef', default=2, type=float)
 parser.add_argument('--focal_alpha', default=0.25, type=float)
 

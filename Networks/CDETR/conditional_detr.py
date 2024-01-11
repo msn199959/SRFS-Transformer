@@ -261,8 +261,13 @@ class SetCriterion(nn.Module):
         v_values = [self.target_map_to_grid(v_value['points']) for v_value in v_values]
         v_values = torch.stack(v_values).transpose(1,2).cuda()
         v_values = v_values.reshape(batch_size,-1) #[batch_size, 64]
-        # u_values_normlized = 1 - self.min_max_norm(u_values) #[2,batch_size, 64]
-        # u_values_softmax = F.softmax(u_values_normlized, dim=1).permute(1, 0, 2) #[batch_size, 2, 64]
+        
+        # 生成网格以表示每个元素的坐标
+        coordinates = torch.tensor([[i, j] for i in range(N) for j in range(N)], dtype=torch.float32)
+
+        # 计算所有点对之间的空间位置 L2 距离
+        cost_matrix_optimized = torch.cdist(coordinates, coordinates, p=2)
+
         u_values = u_values.permute(1, 0, 2)
         u_values_normlized = 1 - self.min_max_norm(u_values) #[2,batch_size, 64]
         u_values_softmax = F.softmax(u_values_normlized, dim=-1) #[batch_size, 2, 64]
@@ -272,7 +277,7 @@ class SetCriterion(nn.Module):
         v_values_softmax = v_values_softmax.unsqueeze(1).expand(-1, 2, -1) # [batch_size, 2, 64]
 
         # losses = {'encoder_supervise': torch.mean(torch.abs(u_values_softmax - v_values_softmax))}
-        losses = {'encoder_supervise': torch.mean(torch.abs(u_values_softmax - v_values_softmax))}
+        losses = {'encoder_supervise': self.sinkhorn_iterations_batched(u_values_softmax, v_values_softmax, cost_matrix_optimized)}
         return losses
     
     def softmax_on_nonzero_with_fallback(self, tensor):
@@ -297,7 +302,7 @@ class SetCriterion(nn.Module):
 
         return output_tensor
     
-    def sinkhorn_iterations_batched(a, b, M, reg, num_iters=100):
+    def sinkhorn_iterations_batched(a, b, M, reg=0.1, num_iters=100):
         """
         Perform Sinkhorn iterations for batched inputs with an additional dimension.
         
@@ -546,7 +551,7 @@ def build(args):
     matcher = build_matcher(args)
     weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_point': args.point_loss_coef}
     if args.encoder_interm_supervise:
-        weight_dict.update({'encoder_supervise': args.encoder_loss_coef})
+        weight_dict.update({'encoder_supervise': args.interm_loss_cof})
 
     weight_dict['loss_giou'] = args.giou_loss_coef
     if args.masks:

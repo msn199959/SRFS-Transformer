@@ -132,7 +132,7 @@ def main(args):
         train(train_data, model, criterion, optimizer, epoch, scheduler, logger, writer, args)
         torch.cuda.empty_cache() #显存清理
         '''inference '''
-        if epoch % args['test_per_epoch'] == 0 and epoch >= 0:
+        if epoch % args['test_per_epoch'] == 0 and epoch >= args['test_start_epoch']:
             pred_mae, pred_mse, visi = validate(test_data, model, criterion, epoch, logger, args)
             if args['local_rank'] == 0:
                 writer.add_scalar('Metrcis/MAE', pred_mae, eval_epoch)
@@ -220,7 +220,6 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
     loss_log = []
 
     # criterion.weight_dict['encoder_supervise'] = max(0.5*(100-epoch)/100, 0)
-    criterion.weight_dict['encoder_supervise'] = 0.5
     for i, (fname, img, targets) in enumerate(train_loader):
         img = img.cuda()
         d6 = model(img)

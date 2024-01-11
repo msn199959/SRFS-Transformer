@@ -8,3 +8,4 @@ images/
 *.png
 test_*.py
 UOT*
+*.log
