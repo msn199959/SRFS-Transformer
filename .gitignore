@@ -9,3 +9,4 @@ images/
 test_*.py
 UOT*
 *.log
+logs/

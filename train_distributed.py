@@ -235,6 +235,10 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
 
     # criterion.weight_dict['encoder_supervise'] = max(0.5*(100-epoch)/100, 0)
     # torch.autograd.set_detect_anomaly(True)
+
+    import copy
+    params_before = copy.deepcopy(model.state_dict())
+
     for i, (fname, img, targets) in enumerate(train_loader):
         # save_img_patch(i,img)
         # criterion.cat_target_for_test(fname, targets)
@@ -242,6 +246,11 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
         d6 = model(img)
         loss_dict, record_idx_costs = criterion(d6, targets, return_idx_costs=args['using_refinement'])
         weight_dict = criterion.weight_dict
+        if epoch <= args['interm_start_epoch']:
+            weight_dict['encoder_supervise'] = 0
+        else:
+            weight_dict['encoder_supervise'] = args['interm_loss_cof']
+            
         loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
         # print(f"loss: {loss_dict}")
         # print(f"total_loss: {loss}")
@@ -265,6 +274,13 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
         #with torch.autograd.detect_anomaly():
         loss.backward()
         optimizer.step()
+        '''
+        params_after = model.state_dict()
+        # 比较参数
+        for key in params_before:
+            change = torch.norm(params_before[key] - params_after[key]).item()
+            print(f"Parameter {key} changed by {change}")
+        '''
         
         if args['using_refinement'] and epoch >= args['starting_epoch'] and epoch % args['refine_interval'] == 0 and args['cur_refine_step'] < args['total_refine_step']:
             with torch.no_grad():
