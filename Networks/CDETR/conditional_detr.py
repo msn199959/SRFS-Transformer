@@ -28,7 +28,8 @@ from .transformer import build_transformer
 import pdb
 import numpy as np
 import scipy.stats
-
+from dm_count.bregman_pytorch import sinkhorn
+from dm_count.ot_loss import OT_Loss
 
 
 class ConditionalDETR(nn.Module):
@@ -127,7 +128,7 @@ class SetCriterion(nn.Module):
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
 
-    def __init__(self, num_classes, matcher, weight_dict, focal_alpha, losses, encoder_interm_supervise=False):
+    def __init__(self, num_classes, matcher, weight_dict, focal_alpha, losses, encoder_interm_supervise=False, ot_loss=None):
         """ Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -143,6 +144,7 @@ class SetCriterion(nn.Module):
         self.losses = losses
         self.focal_alpha = focal_alpha
         self.encoder_interm_supervise = encoder_interm_supervise
+        self.DM_OT_loss = ot_loss
 
     def loss_labels(self, outputs, targets, indices, num_points, log=True):
         """Classification loss (Binary focal loss)
@@ -230,15 +232,14 @@ class SetCriterion(nn.Module):
             y_index = min(y_index, grid_size - 1)
 
             # 增加对应网格单元的值
-            grid[y_index, x_index] += 1
+            grid[x_index, y_index] += 1
 
         return grid
     
     def loss_encoder_supervise(self, u_values, v_values):
-        #import pdb;pdb.set_trace()
         # u_values = intermediate_memory [2, b, 64, 256] 256=channels
         # v_values = target
-        u_values = torch.mean(u_values, dim=3, keepdim=True).squeeze() #[2,batch_size, 64] 
+        u_values = torch.mean(u_values, dim=3, keepdim=True).squeeze() #[2, batch_size, 64, 256]->[2, batch_size, 64] 
         _, batch_size, _ = u_values.shape 
         v_values = [self.target_map_to_grid(v_value['points']) for v_value in v_values]
         v_values = torch.stack(v_values).transpose(1,2).cuda()
@@ -253,7 +254,6 @@ class SetCriterion(nn.Module):
         return losses
     
     def loss_encoder_supervise_OT(self, u_values, v_values):
-        #import pdb;pdb.set_trace()
         # u_values = intermediate_memory [2, b, 64, 256] 256=channels
         # v_values = target
         u_values = torch.mean(u_values, dim=3, keepdim=True).squeeze() #[2,batch_size, 64] 
@@ -263,10 +263,10 @@ class SetCriterion(nn.Module):
         v_values = v_values.reshape(batch_size,-1) #[batch_size, 64]
         
         # 生成网格以表示每个元素的坐标
+        N = int(np.sqrt(v_values.shape[-1]))
         coordinates = torch.tensor([[i, j] for i in range(N) for j in range(N)], dtype=torch.float32)
-
         # 计算所有点对之间的空间位置 L2 距离
-        cost_matrix_optimized = torch.cdist(coordinates, coordinates, p=2)
+        cost_matrix_optimized = torch.cdist(coordinates, coordinates, p=2).cuda()
 
         u_values = u_values.permute(1, 0, 2)
         u_values_normlized = 1 - self.min_max_norm(u_values) #[2,batch_size, 64]
@@ -280,6 +280,70 @@ class SetCriterion(nn.Module):
         losses = {'encoder_supervise': self.sinkhorn_iterations_batched(u_values_softmax, v_values_softmax, cost_matrix_optimized)}
         return losses
     
+    def loss_encoder_supervise_DM(self, interm_density, targets):
+        """之前预想是对最后两层做supervise， 现在可以只对最后一层做，因为有位置编码的干扰"""
+        # interm_density = intermediate_memory [2, b, 64, 256] 256=channels
+        # target_points = target
+
+        interm_density = torch.mean(interm_density, dim=3, keepdim=True).squeeze() #[2,batch_size, 64] 
+        points = [target['points'][:, :2].to(interm_density.device) for target in targets]
+        # v_values = [self.target_map_to_grid(v_value['points']) for v_value in targets]
+
+        interm_density = 1 - self.min_max_norm(interm_density) #[2,batch_size, 64]
+
+        N = int(np.sqrt(interm_density.shape[-1]))
+        channels, batch_size, HW = interm_density.shape
+        interm_density_reshape = interm_density.reshape(channels, batch_size, 1, N, N)
+        total_ot_loss = 0
+
+        for i in range(interm_density_reshape.shape[0]):
+            sub_interm_density = interm_density_reshape[i, ...]
+            interm_density_norm = self.DM_norm(sub_interm_density)
+            ot_loss, wd, ot_obj_value = self.DM_OT_loss(interm_density_norm, sub_interm_density, points)
+            total_ot_loss = total_ot_loss + ot_loss
+
+        losses = {'encoder_supervise': total_ot_loss}
+        return losses
+    
+    def loss_encoder_supervise_DM_for_test(self, fname, interm_density, targets):
+        # interm_density = intermediate_memory [2, b, 64, 256] 256=channels
+        # target_points = target
+        interm_density_mean = torch.mean(interm_density, dim=3, keepdim=True).squeeze().to(interm_density.device) #[2,batch_size, 64] 
+        points = [target['points'][:, :2].to(interm_density.device) for target in targets]
+        v_values = [self.target_map_to_grid(v_value['points']) for v_value in targets]
+
+        interm_density_norm = self.min_max_norm(interm_density_mean)
+        interm_density_flip = 1 - interm_density_norm #[2,batch_size, 64]
+
+        N = int(np.sqrt(interm_density_flip.shape[-1]))
+        channels, batch_size, HW = interm_density_flip.shape
+        interm_density_reshape = interm_density_flip.reshape(channels, batch_size, 1, N, N)
+        total_ot_loss = 0
+
+        for i in range(interm_density_reshape.shape[0]):
+            sub_interm_density = interm_density_reshape[i, ...]
+            sub_interm_density_norm = self.DM_norm(sub_interm_density)
+            ot_loss, wd, ot_obj_value = self.DM_OT_loss(sub_interm_density_norm, sub_interm_density, points)
+            total_ot_loss = total_ot_loss + ot_loss
+
+        losses = {'encoder_supervise': total_ot_loss}
+        return losses
+    
+    def cat_target_for_test(self, fname, targets):
+        # interm_density = intermediate_memory [2, b, 64, 256] 256=channels
+        # target_points = target
+        import pdb; pdb.set_trace()
+        v_values = [self.target_map_to_grid(v_value['points']) for v_value in targets]
+        print(1)
+    
+
+    
+    def DM_norm(self, mu):
+        B, C, H, W = mu.size()
+        mu_sum = mu.view([B, -1]).sum(1).unsqueeze(1).unsqueeze(2).unsqueeze(3)
+        mu_normed = mu / (mu_sum + 1e-6)
+        return mu_normed
+
     def softmax_on_nonzero_with_fallback(self, tensor):
         # 创建一个掩码，标记非零元素
         mask = tensor != 0
@@ -299,10 +363,9 @@ class SetCriterion(nn.Module):
             else:
                 # 如果所有元素都是零，则将每个元素设置为1/shape[1]
                 output_tensor[i] = 1.0 / tensor.size(1)
-
         return output_tensor
     
-    def sinkhorn_iterations_batched(a, b, M, reg=0.1, num_iters=100):
+    def sinkhorn_iterations_batched(self, a, b, M, reg=0.1, num_iters=100):
         """
         Perform Sinkhorn iterations for batched inputs with an additional dimension.
         
@@ -313,12 +376,13 @@ class SetCriterion(nn.Module):
         :param num_iters: Number of iterations.
         :return: Total loss calculated over all batches and transport matrices.
         """
-        batch_size, channels = a.shape[0],a.shape[1]
+        batch_size, channels = a.shape[0], a.shape[1]
         total_loss = 0
+        device = a.device
 
         # Assuming the third dimension of a and b is n*n
         n_square = a.shape[2]
-        transport_matrices = torch.zeros(batch_size, 2, n_square, n_square)
+        transport_matrices = torch.zeros(batch_size, 2, n_square, n_square).to(device)
 
         for i in range(batch_size):
             for j in range(channels):
@@ -349,7 +413,7 @@ class SetCriterion(nn.Module):
 
         # 防止分母为零的情况
         delta = tensor_max - tensor_min
-        delta[delta == 0] = 1
+        # delta[delta == 0] = 1
 
         # 执行最小-最大缩放归一化
         tensor_normalized = (input_tensor - tensor_min) / delta
@@ -427,7 +491,7 @@ class SetCriterion(nn.Module):
         """
 
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
-
+        
         # Retrieve the matching between the outputs of the last layer and the targets
         indices, results_idx_costs = self.matcher(outputs_without_aux, targets, record_flag=return_idx_costs)
         # Compute the average number of target points accross all nodes, for normalization purposes
@@ -445,8 +509,8 @@ class SetCriterion(nn.Module):
             losses.update(self.get_loss(loss, outputs, targets, indices, num_points))
         
         if self.encoder_interm_supervise:
-            #losses.update(self.loss_encoder_supervise(outputs['intermediate_memory'], targets))
-            losses.update(self.loss_encoder_supervise_OT(outputs['intermediate_memory'], targets))
+            # losses.update(self.loss_encoder_supervise_OT(outputs['intermediate_memory'], targets))
+            losses.update(self.loss_encoder_supervise_DM(outputs['intermediate_memory'], targets))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
@@ -550,8 +614,12 @@ def build(args):
         model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
     matcher = build_matcher(args)
     weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_point': args.point_loss_coef}
+
+    ot_loss = None
     if args.encoder_interm_supervise:
         weight_dict.update({'encoder_supervise': args.interm_loss_cof})
+        downsample_ratio = 32
+        ot_loss = OT_Loss(args.crop_size, downsample_ratio, args.norm_cood, device, args.num_of_iter_in_ot, args.reg)
 
     weight_dict['loss_giou'] = args.giou_loss_coef
     if args.masks:
@@ -567,9 +635,11 @@ def build(args):
     losses = ['labels', 'points', 'cardinality']
     if args.masks:
         losses += ["masks"]
+    
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
                              focal_alpha=args.focal_alpha, losses=losses,
-                             encoder_interm_supervise=args.encoder_interm_supervise)
+                             encoder_interm_supervise=args.encoder_interm_supervise,
+                             ot_loss=ot_loss)
     criterion.to(device)
     postprocessors = {'point': PostProcess()}
     if args.masks:

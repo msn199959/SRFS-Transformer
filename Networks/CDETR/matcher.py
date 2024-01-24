@@ -15,6 +15,8 @@ from scipy.optimize import linear_sum_assignment
 from torch import nn
 import numpy as np
 import scipy.spatial
+import pdb
+
 class HungarianMatcher(nn.Module):
     """This class computes an assignment between the targets and the predictions of the network
     For efficiency reasons, the targets don't include the no_object. Because of this, in general,
@@ -66,11 +68,18 @@ class HungarianMatcher(nn.Module):
         neg_cost_class = (1 - alpha) * (out_prob ** gamma) * (-(1 - out_prob + 1e-8).log())
         pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-(out_prob + 1e-8).log())
         cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
-
         cost_point = torch.cdist(out_point, tgt_point.cuda(), p=1)
 
         C = self.cost_class * cost_class + self.cost_point * cost_point
         C = C.view(bs, num_queries, -1).cpu()
+        '''
+        try:
+            # 检查是否有 NaN 值并触发 AssertionError
+            assert not torch.isnan(C).any(), "NaN detected"
+        except AssertionError as e:
+            print(e)  # 打印错误信息
+            pdb.set_trace()  # 开始调试
+        '''
 
         sizes = [len(v["points"]) for v in targets]
         indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]

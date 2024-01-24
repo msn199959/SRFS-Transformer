@@ -25,6 +25,7 @@ from torch.utils.tensorboard import SummaryWriter  # add tensoorboard
 import shutil
 from multiprocessing import cpu_count
 
+
 if args.backbone == 'resnet50' or args.backbone == 'resnet101':
     from Networks.CDETR import build_model
 
@@ -104,7 +105,7 @@ def main(args):
     if args['local_rank'] == 0:
         logger.info(args)
 
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[args['lr_step']], gamma=0.1, last_epoch=-1)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args['lr_step'], gamma=0.5, last_epoch=-1)
 
     if not os.path.exists(args['save_path']):
         os.makedirs(args['save_path'])
@@ -211,21 +212,39 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
         drop_last=False,
         collate_fn=collate_wrapper,
         sampler=datasampler,
-        num_workers=args['workers'] ,
+        num_workers=args['workers'],
         prefetch_factor=2,
         pin_memory=True
     )
     
     model.train()
     loss_log = []
+    '''
+    # 定义一个函数来检查梯度中是否存在NaN，并在存在时打印
+    def check_for_nan(grad):
+        if grad is not None and torch.isnan(grad).any():
+            print(f"NaN detected in the gradients of {name}.")
+            print(f"Gradient: {grad}")
+
+    # 假设您的模型是model
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            # 仅在需要梯度的参数上注册钩子
+            param.register_hook(lambda grad, name=name: check_for_nan(grad, name))
+    '''
 
     # criterion.weight_dict['encoder_supervise'] = max(0.5*(100-epoch)/100, 0)
+    # torch.autograd.set_detect_anomaly(True)
     for i, (fname, img, targets) in enumerate(train_loader):
+        # save_img_patch(i,img)
+        # criterion.cat_target_for_test(fname, targets)
         img = img.cuda()
         d6 = model(img)
         loss_dict, record_idx_costs = criterion(d6, targets, return_idx_costs=args['using_refinement'])
         weight_dict = criterion.weight_dict
         loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
+        # print(f"loss: {loss_dict}")
+        # print(f"total_loss: {loss}")
         if args['local_rank'] == 0:
             writer.add_scalar('loss/total', loss, len(train_loader) * epoch + i)
             writer.add_scalar('loss/loss_ce', loss_dict['loss_ce'], len(train_loader) * epoch + i)
@@ -243,6 +262,7 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
         loss_log.append(loss.item())
 
         optimizer.zero_grad()
+        #with torch.autograd.detect_anomaly():
         loss.backward()
         optimizer.step()
         
@@ -293,7 +313,7 @@ def validate(Pre_data, model, criterion, epoch, logger, args):
         with torch.no_grad():
             img = img.cuda()
             outputs = model(img)
-
+        # import pdb;pdb.set_trace()
         out_logits, out_point = outputs['pred_logits'], outputs['pred_points']
         prob = out_logits.sigmoid()
         prob = prob.view(1, -1, 2)
@@ -317,6 +337,32 @@ def validate(Pre_data, model, criterion, epoch, logger, args):
 
     print('mae', mae, 'mse', mse)
     return mae, mse, visi
+
+def save_img_patch(fname, img):
+    save_dir = './save_raw_img_patch'
+    if os.path.exists(save_dir) == False:
+        os.mkdir(save_dir)
+    import torchvision.transforms as transforms
+    from PIL import Image
+    # 可能需要的反标准化步骤
+    # 如果您的图像已经是 [0, 1] 范围内，则跳过此步骤
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+    inv_normalize = transforms.Normalize(mean=[-m/s for m, s in zip(mean, std)],std=[1/s for s in std])
+
+    # 准备转换操作
+    to_pil = transforms.ToPILImage()
+
+    img_name = fname+1
+
+    # 遍历并保存每个图像
+    for i in range(img.shape[0]):
+        # 反标准化
+        img_normalized = inv_normalize(img[i])
+        # 转换为 PIL 图像
+        img_pil = to_pil(img_normalized)
+        # 保存图像
+        img_pil.save(os.path.join(save_dir, f'{img_name}_patch_{i}.png'))
 
 
 if __name__ == '__main__':

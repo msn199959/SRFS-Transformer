@@ -165,7 +165,12 @@ parser.add_argument('--train_number', type=int, default=0, help='using to distin
 
 # Encoder interm supervise 
 parser.add_argument('--encoder_interm_supervise',  action='store_true', help='using interm features supervise')
-parser.add_argument('--interm_loss_cof',  type=float, default=1.0, help='using refined startegy')
+parser.add_argument('--interm_loss_cof',  type=float, default=1, help='using refined startegy')
+parser.add_argument('--num-of-iter-in-ot', type=int, default=100, help='sinkhorn iterations')
+parser.add_argument('--reg', type=float, default=10.0, help='entropy regularization in sinkhorn')
+parser.add_argument('--norm-cood', type=int, default=0, help='whether to norm cood when computing distance')
+
+
 
 args = parser.parse_args()
 return_args = parser.parse_args()

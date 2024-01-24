@@ -180,7 +180,12 @@ def validate(Pre_data, model, criterion, logger, args):
         kpoint = sum_region(kpoint)
         import pdb;pdb.set_trace()
         '''
+        interm_density = outputs['intermediate_memory']
+        targets_squeezed = []
+        for i in range(len(targets)):
+            targets_squeezed.append({'points': targets[i]['points'].squeeze(0)})
 
+        ot_loss = criterion.loss_encoder_supervise_DM_for_test(fname, interm_density, targets_squeezed) 
         out_logits, out_point = outputs['pred_logits'], outputs['pred_points']
         prob = out_logits.sigmoid()
         prob = prob.view(1, -1, 2)

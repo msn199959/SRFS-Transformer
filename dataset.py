@@ -172,6 +172,13 @@ class listDataset(Dataset):
                                                                                 self.args['crop_size'])
 
             targets = []
+            '''
+            target = {}
+            gt_points = [torch.tensor(self.get_indices_with_repeats_for_test(kpoint_return[i, 0, ...]), dtype=torch.int64) for i in range(kpoint_return.shape[0])]
+            for i in range(len(gt_points)):
+                # target['points'] = torch.true_divide(gt_points[i], self.args['crop_size']).type(torch.FloatTensor)
+                targets.append({'points':torch.true_divide(gt_points[i], self.args['crop_size']).type(torch.FloatTensor)})
+            '''
             patch_info = [num_h, num_w, height, width, self.args['crop_size'], padding_w, padding_h]
             return fname, img_return, kpoint_return, targets, patch_info
 
@@ -191,6 +198,24 @@ class listDataset(Dataset):
             for j in range(array.shape[1]):    # 遍历列
                 if array[i, j] > 0:
                     indices.extend([[i, j]] * array[i, j])  # 根据值添加索引
+        return indices
+    
+    def get_indices_with_repeats_for_test(self, array):
+        """
+        Get the indices of non-zero elements in the array.
+        For elements greater than 1, add indices multiple times (value - 1 times).
+
+        Parameters:
+        array (numpy.ndarray): The input array.
+
+        Returns:
+        list of tuples: A list containing the indices of non-zero elements.
+        """
+        indices = []
+        for i in range(array.shape[0]):        # 遍历行
+            for j in range(array.shape[1]):    # 遍历列
+                if array[i, j] > 0:
+                    indices.extend([[i, j, 0]] * array[i, j])  # 根据值添加索引
         return indices
 
     def caculate_knn_distance(self, gt_points, num_point):
