@@ -305,6 +305,85 @@ class SetCriterion(nn.Module):
         losses = {'encoder_supervise': total_ot_loss}
         return losses
     
+
+    def loss_encoder_supervise_TV(self, interm_density, targets):
+        
+        tv_loss = nn.L1Loss(reduction='none')
+
+        N = int(np.sqrt(interm_density.shape[-2]))
+        discrete_map_list = [self.target_map_to_grid(v_value['points'], N) for v_value in targets]
+        discrete_map = torch.stack(discrete_map_list).unsqueeze(1).cuda() # shape = [batch, 8, 8]
+
+        # u_values = intermediate_memory [2, b, 64, 256] 256=channels
+        # v_values = target
+        interm_density_mean = torch.mean(interm_density, dim=3, keepdim=True).squeeze() #[2,batch_size, 64] 
+        channel, batch_size, hw = interm_density_mean.shape
+        interm_density_mean = interm_density_mean.reshape(batch_size, channel, N, N)
+        interm_density_relu = torch.relu(interm_density_mean)
+        interm_density_norm = self.DM_norm(interm_density_relu)
+
+        # gd_count = np.array([len(p['points'].shape(0)) for p in targets], dtype=np.float32)
+        gd_count = np.array([p['points'].shape[0] for p in targets], dtype=np.float32)
+        gd_count_tensor = torch.from_numpy(gd_count).float().unsqueeze(1).unsqueeze(2).unsqueeze(3).cuda()
+        gt_discrete_normed = discrete_map / (gd_count_tensor + 1e-6)
+
+        total_tv_loss = tv_loss(interm_density_norm, gt_discrete_normed).sum(1).sum(1).sum(1) * (torch.from_numpy(gd_count).float().cuda()).mean(0)
+
+        losses = {'encoder_supervise': torch.sum(total_tv_loss)}
+        return losses
+
+    def gen_discrete_map(self, im_height, im_width, points):
+        """
+            func: generate the discrete map.
+            points: [num_gt, 2], for each row: [width, height]
+            """
+        discrete_map = np.zeros([im_height, im_width], dtype=np.float32)
+        h, w = discrete_map.shape[:2]
+        num_gt = points.shape[0]
+        if num_gt == 0:
+            return discrete_map
+        
+        # fast create discrete map
+        points_np = np.array(points).round().astype(int)
+        p_h = np.minimum(points_np[:, 1], np.array([h-1]*num_gt).astype(int))
+        p_w = np.minimum(points_np[:, 0], np.array([w-1]*num_gt).astype(int))
+        p_index = torch.from_numpy(p_h* im_width + p_w)
+        discrete_map = torch.zeros(im_width * im_height).scatter_add_(0, index=p_index, src=torch.ones(im_width*im_height)).view(im_height, im_width).numpy()
+
+        ''' slow method
+        for p in points:
+            p = np.round(p).astype(int)
+            p[0], p[1] = min(h - 1, p[1]), min(w - 1, p[0])
+            discrete_map[p[0], p[1]] += 1
+        '''
+        assert np.sum(discrete_map) == num_gt
+        return discrete_map
+    
+    def loss_encoder_supervise_DM(self, interm_density, targets):
+        """之前预想是对最后两层做supervise， 现在可以只对最后一层做，因为有位置编码的干扰"""
+        # interm_density = intermediate_memory [2, b, 64, 256] 256=channels
+        # target_points = target
+
+        interm_density = torch.mean(interm_density, dim=3, keepdim=True).squeeze() #[2,batch_size, 64] 
+        points = [target['points'][:, :2].to(interm_density.device) for target in targets]
+        # v_values = [self.target_map_to_grid(v_value['points']) for v_value in targets]
+
+        interm_density = 1 - self.min_max_norm(interm_density) #[2,batch_size, 64]
+
+        N = int(np.sqrt(interm_density.shape[-1]))
+        channels, batch_size, HW = interm_density.shape
+        interm_density_reshape = interm_density.reshape(channels, batch_size, 1, N, N)
+        total_ot_loss = 0
+
+        for i in range(interm_density_reshape.shape[0]):
+            sub_interm_density = interm_density_reshape[i, ...]
+            interm_density_norm = self.DM_norm(sub_interm_density)
+            ot_loss, wd, ot_obj_value = self.DM_OT_loss(interm_density_norm, sub_interm_density, points)
+            total_ot_loss = total_ot_loss + ot_loss
+
+        losses = {'encoder_supervise': total_ot_loss}
+        return losses
+    
     def loss_encoder_supervise_DM_for_test(self, fname, interm_density, targets):
         # interm_density = intermediate_memory [2, b, 64, 256] 256=channels
         # target_points = target
@@ -510,7 +589,8 @@ class SetCriterion(nn.Module):
         
         if self.encoder_interm_supervise:
             # losses.update(self.loss_encoder_supervise_OT(outputs['intermediate_memory'], targets))
-            losses.update(self.loss_encoder_supervise_DM(outputs['intermediate_memory'], targets))
+            # losses.update(self.loss_encoder_supervise_DM(outputs['intermediate_memory'], targets))
+            losses.update(self.loss_encoder_supervise_TV(outputs['intermediate_memory'], targets))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:

@@ -59,7 +59,7 @@ class OT_Loss(Module):
                 source_prob = normed_density[idx][0].view([-1]).detach()
                 target_prob = (torch.ones([len(im_points)]) / len(im_points)).to(self.device)
                 # use sinkhorn to solve OT, compute optimal beta.
-                P, log = sinkhorn(target_prob, source_prob, dis, self.reg, maxIter=self.num_of_iter_in_ot, log=True)
+                P, log = sinkhorn(target_prob, source_prob, dis, self.reg, method="sinkhorn_stabilized", maxIter=self.num_of_iter_in_ot, log=True)
                 beta = log['beta'] # size is the same as source_prob: [#cood * #cood]
                 ot_obj_values += torch.sum(normed_density[idx] * beta.view([1, self.output_size, self.output_size]))
                 # compute the gradient of OT loss to predicted density (unnormed_density).

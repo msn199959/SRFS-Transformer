@@ -23,7 +23,7 @@ parser.add_argument('--batch_size', type=int, default=16,
 parser.add_argument('--crop_size', type=int, default=256,
                     help='crop size for training')
 # parser.add_argument('--lr_step', type=int, default=1200,help='lr_step')
-parser.add_argument('--lr_step', type=list, default=[140, 500], help='lr_step')
+parser.add_argument('--lr_step', type=list, default=[1200], help='lr_step')
 parser.add_argument('--seed', type=int, default=1,
                     help='random seed')
 parser.add_argument('--best_pred', type=int, default=1e5,

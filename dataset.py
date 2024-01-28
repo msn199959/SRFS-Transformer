@@ -251,7 +251,7 @@ class listDataset(Dataset):
 
         return distances
     
-    def refine_gt(self, img_paths, outputs, targets, record_idx_costs):
+    def refine_gt(self, img_paths, outputs, targets, record_idx_costs, method="traditional"):
         '''
         refine the latest gt(.h5) file, and save a newer(the refine_step)
         input:
@@ -259,7 +259,6 @@ class listDataset(Dataset):
         record_idx_costs: record out_idx, tgt_idx and cost
         gt_data_dir: dir of saving gt data
         '''
-        ## 需要注意存在 flip aug等增强操作
 
         '''
          outputs.keys()
@@ -332,12 +331,39 @@ class listDataset(Dataset):
 
             sorted_predict_points = predicted_points[cost_sort_idx]
             sorted_training_points = training_points[cost_sort_idx]
+
+            # 预测的置信度
             sorted_predict_logits = predicted_logits[cost_sort_idx][:, -1].unsqueeze(1)
 
-            pred_cof = self.args['refine_weight'] * sorted_predict_logits
-            gt_cof = 1 - pred_cof
-            refined_gt_points = (torch.round(gt_cof*sorted_training_points + pred_cof*sorted_predict_points).to(torch.int32)).numpy()
+            if method == "traditional":
+                # 将置信度融入到权重中
+                pred_cof = self.args['refine_weight'] * sorted_predict_logits
+                gt_cof = 1 - pred_cof
+                # 修正的points
+                refined_gt_points = (torch.round(gt_cof*sorted_training_points + pred_cof*sorted_predict_points).to(torch.int32)).numpy()
 
+            elif method == "high_cof_fur_distance":
+                
+                # sorted_predict_points.shape = torch.Size([15, 2])
+                # 返回最近和最远的点的索引
+                nearest_indices, furthest_indices, sorted_distances = self.caculate_point_distance(sorted_predict_points, sorted_training_points, top_ratio=0.5)
+                top_ratio = 0.5
+                threshold = int(top_ratio * sorted_predict_points.shape[0])
+
+                # 返回即远置信又高的索引
+                selected_elements = furthest_indices[furthest_indices <= threshold]
+                selected_logits = sorted_predict_logits[selected_elements]
+                # 将置信度融入到权重中
+                pred_cof = self.args['refine_weight'] * selected_logits
+                gt_cof = 1 - pred_cof
+                refined_gt_points_init = sorted_training_points.clone()
+
+                for i, indice in enumerate(selected_elements):
+                    refined_gt_points_init[indice] = gt_cof[i]*sorted_training_points[indice] + pred_cof[i]*sorted_predict_points[indice]
+                import pdb; pdb.set_trace()
+                refined_gt_points = (torch.round(refined_gt_points_init).to(torch.int32)).numpy()
+
+            # points->二维map
             refined_results = np.zeros((height, width), dtype=int)
             np.add.at(refined_results, (refined_gt_points[:, 0], refined_gt_points[:, 1]), 1)
 
@@ -347,6 +373,34 @@ class listDataset(Dataset):
                 kpoint = np.fliplr(kpoint)
             
             self.save_refined_data(img_path, last_gt_data_dir, new_gt_data_dir, kpoint)
+
+    def caculate_point_distance(self, pred_points, gt_points, top_ratio=0.5, p=2):
+        # 假设 tensor1 和 tensor2 是你的输入 tensors，维度均为 [batch, 2]
+        # 计算两个 tensor 之间的差异
+        differences = pred_points - gt_points
+
+        # 计算距离
+        if p == 1:
+            distances = torch.sum(torch.abs(differences), dim=1)
+        elif p == 2:
+            distances = torch.sqrt(torch.sum(differences ** 2, dim=1))
+        else:
+            raise Exception("计算维度错误")
+
+        # 对距离进行排序，并获取索引
+        sorted_distances, indices = torch.sort(distances, descending=True)
+
+        # 选择距离最远的一半
+        half_batch = int(len(distances) * top_ratio)
+        furthest_distances = sorted_distances[:half_batch]
+        furthest_indices = indices[:half_batch]
+        nearest_indices = indices[half_batch:]
+
+        # 如果需要得到原始的坐标对，可以使用这些索引
+        # furthest_pairs_tensor1 = pred_points[furthest_indices]
+        # furthest_pairs_tensor2 = gt_points[furthest_indices]
+
+        return nearest_indices, furthest_indices, sorted_distances
 
 
     def load_refined_data(self, img_path):

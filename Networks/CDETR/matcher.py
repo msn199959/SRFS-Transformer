@@ -94,7 +94,10 @@ class HungarianMatcher(nn.Module):
                 # 使用 NumPy 索引从 C 中提取匹配值, type(values)=tensor
                 values = C[batch_index, out_indices, tgt_indices]
                 idx_cost = torch.stack([torch.from_numpy(out_indices),torch.from_numpy(tgt_indices), values],dim=1)
+
+                # combined_idx_costs 包含匹配上的pred target的索引和其cost
                 combined_idx_costs.append(idx_cost)
+                
             return results, combined_idx_costs
         
         return results, None

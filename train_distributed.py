@@ -252,7 +252,7 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
             weight_dict['encoder_supervise'] = args['interm_loss_cof']
             
         loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
-        # print(f"loss: {loss_dict}")
+        print(f"loss: {loss_dict}")
         # print(f"total_loss: {loss}")
         if args['local_rank'] == 0:
             writer.add_scalar('loss/total', loss, len(train_loader) * epoch + i)
@@ -284,7 +284,7 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
         
         if args['using_refinement'] and epoch >= args['starting_epoch'] and epoch % args['refine_interval'] == 0 and args['cur_refine_step'] < args['total_refine_step']:
             with torch.no_grad():
-                train_data.refine_gt(fname, d6, targets, record_idx_costs)
+                train_data.refine_gt(fname, d6, targets, record_idx_costs, method="high_cof_fur_distance")
 
     torch.cuda.synchronize()
     epoch_time = time.time() - start
