@@ -251,7 +251,7 @@ class listDataset(Dataset):
 
         return distances
     
-    def refine_gt(self, img_paths, outputs, targets, record_idx_costs, method="traditional"):
+    def refine_gt(self, img_paths, outputs, targets, record_idx_costs, method="traditional", cof_threshold=0, distance_ratio=0.5):
         '''
         refine the latest gt(.h5) file, and save a newer(the refine_step)
         input:
@@ -338,29 +338,34 @@ class listDataset(Dataset):
             if method == "traditional":
                 # 将置信度融入到权重中
                 pred_cof = self.args['refine_weight'] * sorted_predict_logits
-                gt_cof = 1 - pred_cof
+                clamped_pred_cof = torch.clamp(pred_cof, min=0.0, max=1.0)
+                gt_cof = 1 - clamped_pred_cof
                 # 修正的points
-                refined_gt_points = (torch.round(gt_cof*sorted_training_points + pred_cof*sorted_predict_points).to(torch.int32)).numpy()
+                refined_gt_points = (torch.round(gt_cof*sorted_training_points + clamped_pred_cof*sorted_predict_points).to(torch.int32)).numpy()
 
             elif method == "high_cof_fur_distance":
                 
                 # sorted_predict_points.shape = torch.Size([15, 2])
                 # 返回最近和最远的点的索引
                 nearest_indices, furthest_indices, sorted_distances = self.caculate_point_distance(sorted_predict_points, sorted_training_points, top_ratio=0.5)
-                top_ratio = 0.5
-                threshold = int(top_ratio * sorted_predict_points.shape[0])
+                distance_threshold = int(distance_ratio * sorted_predict_points.shape[0])
 
                 # 返回即远置信又高的索引
-                selected_elements = furthest_indices[furthest_indices <= threshold]
+                selected_elements = furthest_indices[furthest_indices <= distance_threshold]
                 selected_logits = sorted_predict_logits[selected_elements]
+                if cof_threshold > 0:
+                    cof_indices = (selected_logits > cof_threshold).nonzero(as_tuple=False).squeeze(1)
+                    selected_elements = selected_elements[cof_indices]
+                    selected_logits = sorted_predict_logits[selected_elements]
+
                 # 将置信度融入到权重中
                 pred_cof = self.args['refine_weight'] * selected_logits
-                gt_cof = 1 - pred_cof
+                clamped_pred_cof = torch.clamp(pred_cof, min=0.0, max=1.0)
+                gt_cof = 1 - clamped_pred_cof
                 refined_gt_points_init = sorted_training_points.clone()
 
                 for i, indice in enumerate(selected_elements):
-                    refined_gt_points_init[indice] = gt_cof[i]*sorted_training_points[indice] + pred_cof[i]*sorted_predict_points[indice]
-                import pdb; pdb.set_trace()
+                    refined_gt_points_init[indice] = gt_cof[i]*sorted_training_points[indice] + clamped_pred_cof[i]*sorted_predict_points[indice]
                 refined_gt_points = (torch.round(refined_gt_points_init).to(torch.int32)).numpy()
 
             # points->二维map

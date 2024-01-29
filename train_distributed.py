@@ -53,7 +53,7 @@ def main(args):
         if args['local_rank'] == 0:
             if os.path.exists(replace_path):
                 shutil.rmtree(replace_path)
-                print(f'----------delete the last gt dir {source_path} -----------')
+                print(f'----------delete the last gt dir {replace_path} -----------')
             shutil.copytree(source_path, replace_path)
             print(f'-----------replace new gt dir {replace_path}-----------')
 
@@ -246,13 +246,13 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
         d6 = model(img)
         loss_dict, record_idx_costs = criterion(d6, targets, return_idx_costs=args['using_refinement'])
         weight_dict = criterion.weight_dict
-        if epoch <= args['interm_start_epoch']:
+        if epoch < args['interm_start_epoch']:
             weight_dict['encoder_supervise'] = 0
         else:
             weight_dict['encoder_supervise'] = args['interm_loss_cof']
             
         loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
-        print(f"loss: {loss_dict}")
+        # print(f"loss: {loss_dict}")
         # print(f"total_loss: {loss}")
         if args['local_rank'] == 0:
             writer.add_scalar('loss/total', loss, len(train_loader) * epoch + i)
@@ -284,7 +284,7 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
         
         if args['using_refinement'] and epoch >= args['starting_epoch'] and epoch % args['refine_interval'] == 0 and args['cur_refine_step'] < args['total_refine_step']:
             with torch.no_grad():
-                train_data.refine_gt(fname, d6, targets, record_idx_costs, method="high_cof_fur_distance")
+                train_data.refine_gt(fname, d6, targets, record_idx_costs, method="high_cof_fur_distance", cof_threshold=args['cof_threshold'], distance_ratio=args['distance_ratio'])
 
     torch.cuda.synchronize()
     epoch_time = time.time() - start

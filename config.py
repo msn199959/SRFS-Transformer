@@ -60,7 +60,7 @@ parser.add_argument('--num_knn', type=int, default=4,
 parser.add_argument('--test_per_epoch', type=int, default=20,
                     help='test_per_epoch')
 parser.add_argument('--test_start_epoch', type=int, default=40,
-                    help='test_per_epoch')
+                    help='test_start_epoch')
 parser.add_argument('--threshold', type=float, default=0.35,
                     help='threshold to filter the negative points')
 
@@ -161,6 +161,9 @@ parser.add_argument('--refine_interval', type=int, default=3, help='the interval
 parser.add_argument('--starting_epoch', type=int, default=40, help='the interval of refinement')
 parser.add_argument('--refine_replace', type=bool, default=False, help='the interval of refinement')
 parser.add_argument('--train_number', type=int, default=0, help='using to distinguish between different experiments')
+parser.add_argument('--cof_threshold', type=float, default=0.0, help='cofidence threshold to change the gt')
+parser.add_argument('--distance_ratio', type=float, default=0.5, help='distance threshold to change the gt')
+
 
 
 # Encoder interm supervise 
