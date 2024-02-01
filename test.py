@@ -171,15 +171,7 @@ def validate(Pre_data, model, criterion, logger, args):
         with torch.no_grad():
             img = img.cuda()
             outputs = model(img)
-        '''
-        interm_features = outputs['intermediate_memory']
-        batch = interm_features.shape[1]
-        interm_features = interm_features.reshape(2, batch, 256, 8, 8).transpose(0, 1)
-        interm_features = interm_features.mean(dim=2)
-        interm_features = min_max_norm(interm_features)
-        kpoint = sum_region(kpoint)
-        import pdb;pdb.set_trace()
-        '''
+
         interm_density = outputs['intermediate_memory']
         targets_squeezed = []
         for i in range(len(targets)):
@@ -213,6 +205,65 @@ def validate(Pre_data, model, criterion, logger, args):
     print('mae', mae, 'mse', mse)
     return mae, mse, visi
 
+def validate_localization(Pre_data, model, criterion, logger, args):
+    if args['local_rank'] == 0:
+        logger.info('begin test')
+    test_loader = torch.utils.data.DataLoader(
+        dataset.listDataset(Pre_data, args['save_path'],
+                            shuffle=False,
+                            transform=transforms.Compose([
+                                transforms.ToTensor(), transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                                            std=[0.229, 0.224, 0.225]),
+                            ]),
+                            args=args, train=False),
+        batch_size=1,
+    )
+
+    model.eval()
+
+    mae = 0.0
+    mse = 0.0
+    visi = []
+
+    for i, (fname, img, kpoint, targets, patch_info) in enumerate(test_loader):
+
+        if len(img.shape) == 5:
+            img = img.squeeze(0)
+        if len(img.shape) == 3:
+            img = img.unsqueeze(0)
+        if len(kpoint.shape) == 5:
+            kpoint = kpoint.squeeze(0)
+
+        with torch.no_grad():
+            img = img.cuda()
+            outputs = model(img)
+
+        out_logits, out_point = outputs['pred_logits'], outputs['pred_points']
+        prob = out_logits.sigmoid()
+        prob = prob.view(1, -1, 2)
+        out_logits = out_logits.view(1, -1, 2)
+        topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1),
+                                               kpoint.shape[0] * args['num_queries'], dim=1)
+        count = 0
+        gt_count = torch.sum(kpoint).item()
+        for k in range(topk_values.shape[0]):
+            sub_count = topk_values[k, :]
+            sub_count[sub_count < args['threshold']] = 0
+            sub_count[sub_count > 0] = 1
+            sub_count = torch.sum(sub_count).item()
+            count += sub_count
+
+        mae += abs(count - gt_count)
+        mse += abs(count - gt_count) * abs(count - gt_count)
+
+        if i % 30 == 0:
+            print('{fname} Gt {gt:.2f} Pred {pred}'.format(fname=fname[0], gt=gt_count, pred=count))
+
+    mae = mae / len(test_loader)
+    mse = math.sqrt(mse / len(test_loader))
+
+    print('mae', mae, 'mse', mse)
+    return mae, mse, visi
 
 def min_max_norm(input_tensor):
     # Min and max values calculated over the last two dimensions (for each 8x8 tensor)

@@ -292,6 +292,8 @@ class listDataset(Dataset):
             if not os.path.exists(new_gt_data_dir):
                     os.makedirs(new_gt_data_dir)
 
+        final_refine_points = 0
+
         for i, (img_path, output_confs, output_cords, target, record_idx_cost) in enumerate(zip(img_paths, outputs_logits_cords['pred_logits'], outputs_logits_cords['pred_points'][...,:2], targets, record_idx_costs)):
             kpoint = self.load_refined_data(img_path)
             target = {k: v.to('cpu') for k, v in target.items()}
@@ -351,22 +353,24 @@ class listDataset(Dataset):
                 distance_threshold = int(distance_ratio * sorted_predict_points.shape[0])
 
                 # 返回即远置信又高的索引
-                selected_elements = furthest_indices[furthest_indices <= distance_threshold]
+                selected_elements = furthest_indices[furthest_indices <= distance_threshold].long()
                 selected_logits = sorted_predict_logits[selected_elements]
                 if cof_threshold > 0:
                     cof_indices = (selected_logits > cof_threshold).nonzero(as_tuple=False).squeeze(1)
-                    selected_elements = selected_elements[cof_indices]
+                    selected_elements = selected_elements[cof_indices].long()
                     selected_logits = sorted_predict_logits[selected_elements]
 
                 # 将置信度融入到权重中
                 pred_cof = self.args['refine_weight'] * selected_logits
                 clamped_pred_cof = torch.clamp(pred_cof, min=0.0, max=1.0)
                 gt_cof = 1 - clamped_pred_cof
-                refined_gt_points_init = sorted_training_points.clone()
+                refined_gt_points_init = sorted_training_points.clone().float()
 
                 for i, indice in enumerate(selected_elements):
                     refined_gt_points_init[indice] = gt_cof[i]*sorted_training_points[indice] + clamped_pred_cof[i]*sorted_predict_points[indice]
                 refined_gt_points = (torch.round(refined_gt_points_init).to(torch.int32)).numpy()
+
+            final_refine_points += selected_elements.shape[0]
 
             # points->二维map
             refined_results = np.zeros((height, width), dtype=int)
@@ -378,6 +382,8 @@ class listDataset(Dataset):
                 kpoint = np.fliplr(kpoint)
             
             self.save_refined_data(img_path, last_gt_data_dir, new_gt_data_dir, kpoint)
+
+        return final_refine_points
 
     def caculate_point_distance(self, pred_points, gt_points, top_ratio=0.5, p=2):
         # 假设 tensor1 和 tensor2 是你的输入 tensors，维度均为 [batch, 2]

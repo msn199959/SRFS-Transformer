@@ -128,7 +128,7 @@ class SetCriterion(nn.Module):
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
 
-    def __init__(self, num_classes, matcher, weight_dict, focal_alpha, losses, encoder_interm_supervise=False, ot_loss=None):
+    def __init__(self, num_classes, matcher, weight_dict, focal_alpha, losses, encoder_interm_supervise=False, num_interm_features=2, ot_loss=None):
         """ Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -145,6 +145,7 @@ class SetCriterion(nn.Module):
         self.focal_alpha = focal_alpha
         self.encoder_interm_supervise = encoder_interm_supervise
         self.DM_OT_loss = ot_loss
+        self.num_interm_features = num_interm_features
 
     def loss_labels(self, outputs, targets, indices, num_points, log=True):
         """Classification loss (Binary focal loss)
@@ -307,7 +308,6 @@ class SetCriterion(nn.Module):
     
 
     def loss_encoder_supervise_TV(self, interm_density, targets):
-        
         tv_loss = nn.L1Loss(reduction='none')
 
         N = int(np.sqrt(interm_density.shape[-2]))
@@ -316,6 +316,10 @@ class SetCriterion(nn.Module):
 
         # u_values = intermediate_memory [2, b, 64, 256] 256=channels
         # v_values = target
+        if self.num_interm_features == 1:
+            interm_density = interm_density[0]
+            interm_density = interm_density.unsqueeze(0)
+            assert len(interm_density.shape) == 4
         interm_density_mean = torch.mean(interm_density, dim=3, keepdim=True).squeeze() #[2,batch_size, 64] 
         channel, batch_size, hw = interm_density_mean.shape
         interm_density_mean = interm_density_mean.reshape(batch_size, channel, N, N)
@@ -414,8 +418,6 @@ class SetCriterion(nn.Module):
         import pdb; pdb.set_trace()
         v_values = [self.target_map_to_grid(v_value['points']) for v_value in targets]
         print(1)
-    
-
     
     def DM_norm(self, mu):
         B, C, H, W = mu.size()
@@ -698,8 +700,8 @@ def build(args):
     ot_loss = None
     if args.encoder_interm_supervise:
         weight_dict.update({'encoder_supervise': args.interm_loss_cof})
-        downsample_ratio = 32
-        ot_loss = OT_Loss(args.crop_size, downsample_ratio, args.norm_cood, device, args.num_of_iter_in_ot, args.reg)
+        #downsample_ratio = 32
+        #ot_loss = OT_Loss(args.crop_size, downsample_ratio, args.norm_cood, device, args.num_of_iter_in_ot, args.reg)
 
     weight_dict['loss_giou'] = args.giou_loss_coef
     if args.masks:
@@ -719,7 +721,7 @@ def build(args):
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
                              focal_alpha=args.focal_alpha, losses=losses,
                              encoder_interm_supervise=args.encoder_interm_supervise,
-                             ot_loss=ot_loss)
+                             num_interm_features=args.num_interm_features)
     criterion.to(device)
     postprocessors = {'point': PostProcess()}
     if args.masks:

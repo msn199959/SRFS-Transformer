@@ -151,7 +151,6 @@ parser.add_argument('--dist_url', default='env:// ', help='url used to set up di
 parser.add_argument('--master_port', default=29501, type=int,
                     help='master_port')
 
-
 # Refinement parameters
 parser.add_argument('--using_refinement',  action='store_true', help='using refined startegy')
 parser.add_argument('--cur_refine_step', type=int, default=0, help='current refine step')
@@ -164,8 +163,6 @@ parser.add_argument('--train_number', type=int, default=0, help='using to distin
 parser.add_argument('--cof_threshold', type=float, default=0.0, help='cofidence threshold to change the gt')
 parser.add_argument('--distance_ratio', type=float, default=0.5, help='distance threshold to change the gt')
 
-
-
 # Encoder interm supervise 
 parser.add_argument('--encoder_interm_supervise',  action='store_true', help='using interm features supervise')
 parser.add_argument('--interm_loss_cof',  type=float, default=1, help='using refined startegy')
@@ -173,8 +170,7 @@ parser.add_argument('--num-of-iter-in-ot', type=int, default=100, help='sinkhorn
 parser.add_argument('--reg', type=float, default=10.0, help='entropy regularization in sinkhorn')
 parser.add_argument('--norm-cood', type=int, default=0, help='whether to norm cood when computing distance')
 parser.add_argument('--interm_start_epoch', type=int, default=0, help='whether to norm cood when computing distance')
-
-
+parser.add_argument('--num_interm_features', type=int, default=2, help='whether to norm cood when computing distance')
 
 args = parser.parse_args()
 return_args = parser.parse_args()

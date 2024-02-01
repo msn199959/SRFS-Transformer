@@ -52,10 +52,16 @@ def main(args):
 
         if args['local_rank'] == 0:
             if os.path.exists(replace_path):
-                shutil.rmtree(replace_path)
-                print(f'----------delete the last gt dir {replace_path} -----------')
-            shutil.copytree(source_path, replace_path)
-            print(f'-----------replace new gt dir {replace_path}-----------')
+                if args['pre'] is None :
+                    shutil.rmtree(replace_path)
+                    print(f'----------delete the last gt dir {replace_path} -----------')
+                    shutil.copytree(source_path, replace_path)
+                    print(f'-----------replace new gt dir {replace_path}-----------')
+                else:
+                    None
+            else:
+                shutil.copytree(source_path, replace_path)
+                print(f'-----------replace new gt dir {replace_path}-----------')
 
     args['workers'] = int(cpu_count()/3)
     if args['local_rank'] == 0:
@@ -236,8 +242,11 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
     # criterion.weight_dict['encoder_supervise'] = max(0.5*(100-epoch)/100, 0)
     # torch.autograd.set_detect_anomaly(True)
 
-    import copy
-    params_before = copy.deepcopy(model.state_dict())
+    # import copy
+    # params_before = copy.deepcopy(model.state_dict())
+    
+    # 记录修正点的个数
+    refine_points_num = 0
 
     for i, (fname, img, targets) in enumerate(train_loader):
         # save_img_patch(i,img)
@@ -284,7 +293,7 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
         
         if args['using_refinement'] and epoch >= args['starting_epoch'] and epoch % args['refine_interval'] == 0 and args['cur_refine_step'] < args['total_refine_step']:
             with torch.no_grad():
-                train_data.refine_gt(fname, d6, targets, record_idx_costs, method="high_cof_fur_distance", cof_threshold=args['cof_threshold'], distance_ratio=args['distance_ratio'])
+                refine_points_num += train_data.refine_gt(fname, d6, targets, record_idx_costs, method="high_cof_fur_distance", cof_threshold=args['cof_threshold'], distance_ratio=args['distance_ratio'])
 
     torch.cuda.synchronize()
     epoch_time = time.time() - start
@@ -292,7 +301,7 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
     if args['local_rank'] == 0:
         logger.info('Training Epoch:[{}/{}]\t loss={:.5f}\t lr={:.6f}\t epoch_time={:.3f}'.format(epoch,args['epochs'],np.mean(loss_log),args['lr'], epoch_time))
         if args['using_refinement'] and epoch >= args['starting_epoch'] and epoch % args['refine_interval'] == 0 and args['cur_refine_step'] < args['total_refine_step']:
-            logger.info(f"----------Refinement at {epoch} epoch --------------")
+            logger.info(f"----------Refinement at {epoch} epoch and refine {refine_points_num} points--------------")
             args['cur_refine_step'] += 1
 
 def validate(Pre_data, model, criterion, epoch, logger, args):
