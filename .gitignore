@@ -10,3 +10,4 @@ test_*.py
 UOT*
 *.log
 logs/
+tensorboard_compare/

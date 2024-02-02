@@ -291,7 +291,7 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
             print(f"Parameter {key} changed by {change}")
         '''
         
-        if args['using_refinement'] and epoch >= args['starting_epoch'] and epoch % args['refine_interval'] == 0 and args['cur_refine_step'] < args['total_refine_step']:
+        if args['using_refinement'] and epoch >= args['refine_starting_epoch'] and epoch % args['refine_interval'] == 0 and args['cur_refine_step'] < args['total_refine_step']:
             with torch.no_grad():
                 refine_points_num += train_data.refine_gt(fname, d6, targets, record_idx_costs, method="high_cof_fur_distance", cof_threshold=args['cof_threshold'], distance_ratio=args['distance_ratio'])
 
@@ -300,7 +300,7 @@ def train(Pre_data, model, criterion, optimizer, epoch, scheduler, logger, write
     scheduler.step()
     if args['local_rank'] == 0:
         logger.info('Training Epoch:[{}/{}]\t loss={:.5f}\t lr={:.6f}\t epoch_time={:.3f}'.format(epoch,args['epochs'],np.mean(loss_log),args['lr'], epoch_time))
-        if args['using_refinement'] and epoch >= args['starting_epoch'] and epoch % args['refine_interval'] == 0 and args['cur_refine_step'] < args['total_refine_step']:
+        if args['using_refinement'] and epoch >= args['refine_starting_epoch'] and epoch % args['refine_interval'] == 0 and args['cur_refine_step'] < args['total_refine_step']:
             logger.info(f"----------Refinement at {epoch} epoch and refine {refine_points_num} points--------------")
             args['cur_refine_step'] += 1
 

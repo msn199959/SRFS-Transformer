@@ -307,7 +307,7 @@ class SetCriterion(nn.Module):
         return losses
     
 
-    def loss_encoder_supervise_TV(self, interm_density, targets):
+    def loss_encoder_supervise_TV(self, interm_density, targets, flag=False):
         tv_loss = nn.L1Loss(reduction='none')
 
         N = int(np.sqrt(interm_density.shape[-2]))
@@ -324,7 +324,11 @@ class SetCriterion(nn.Module):
         channel, batch_size, hw = interm_density_mean.shape
         interm_density_mean = interm_density_mean.reshape(batch_size, channel, N, N)
         interm_density_relu = torch.relu(interm_density_mean)
-        interm_density_norm = self.DM_norm(interm_density_relu)
+        if flag == False:
+            interm_density_norm = self.DM_norm(interm_density_relu)
+        else:
+            interm_density_flip = 1 - interm_density_relu
+            interm_density_norm = self.DM_norm(interm_density_flip)
 
         # gd_count = np.array([len(p['points'].shape(0)) for p in targets], dtype=np.float32)
         gd_count = np.array([p['points'].shape[0] for p in targets], dtype=np.float32)
@@ -333,7 +337,7 @@ class SetCriterion(nn.Module):
 
         total_tv_loss = tv_loss(interm_density_norm, gt_discrete_normed).sum(1).sum(1).sum(1) * (torch.from_numpy(gd_count).float().cuda()).mean(0)
 
-        losses = {'encoder_supervise': torch.sum(total_tv_loss)}
+        losses = {'encoder_supervise': torch.true_divide(torch.sum(total_tv_loss), batch_size).type(torch.FloatTensor)}
         return losses
 
     def gen_discrete_map(self, im_height, im_width, points):
